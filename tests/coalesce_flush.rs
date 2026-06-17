@@ -107,3 +107,30 @@ fn critical_message_passes_through() {
         .any(|w| w == [14, 0x00, HID_ID_GAMEPAD_FIRST as u8]);
     assert!(gamepad_destroy, "expected DESTROY for gamepad id 3");
 }
+
+#[test]
+fn direct_packed_batch_flushes_once() {
+    let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+    let frames = vec![[0u8; 15]; 64];
+    s.set_frame_raw_packed_batch(&frames).unwrap();
+    // create + one flushed dispatch.
+    assert_eq!(s.flushes(), 2);
+    assert_eq!(s.stats().2, 0);
+    s.close().unwrap();
+}
+
+#[test]
+fn direct_raw_batch_unchecked_flushes_once() {
+    use android_hid_connect::session::GamepadFrameRaw;
+
+    let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+    let frames = vec![
+        GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0),
+        GamepadFrameRaw::new(2, 1, -1, 2, -2, 100, 200),
+    ];
+    s.set_frame_raw_batch_unchecked(&frames).unwrap();
+    // create + one flushed dispatch.
+    assert_eq!(s.flushes(), 2);
+    assert_eq!(s.stats().2, 0);
+    s.close().unwrap();
+}

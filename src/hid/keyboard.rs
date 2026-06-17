@@ -132,12 +132,12 @@ impl KeyboardHid {
                 for b in &mut data[2..] {
                     *b = SC_HID_ERROR_ROLL_OVER;
                 }
-                return HidReport::new(HID_ID_KEYBOARD, data.to_vec());
+                return HidReport::new(HID_ID_KEYBOARD, &data);
             }
             data[2 + slot] = sc as u8;
             slot += 1;
         }
-        HidReport::new(HID_ID_KEYBOARD, data.to_vec())
+        HidReport::new(HID_ID_KEYBOARD, &data)
     }
 
     /// Build a report from a single scancode event, automatically
@@ -158,7 +158,7 @@ impl KeyboardHid {
     pub fn to_input_message(&self, report: &HidReport) -> ControlMessage {
         assert_eq!(report.hid_id, HID_ID_KEYBOARD);
         let mut data = [0u8; HID_MAX_SIZE];
-        let n = report.data.len().min(HID_MAX_SIZE);
+        let n = (report.size as usize).min(HID_MAX_SIZE);
         data[..n].copy_from_slice(&report.data[..n]);
         ControlMessage::UhidInput(UhidInput {
             id: report.hid_id,
@@ -287,7 +287,10 @@ mod tests {
         k.set_key(0x1A, true).unwrap(); // W
         let r = k.build_report(Modifiers::empty());
         assert_eq!(r.hid_id, HID_ID_KEYBOARD);
-        assert_eq!(r.data, vec![0x00, 0x00, 0x04, 0x1A, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &r.data[..KEYBOARD_REPORT_SIZE],
+            &[0x00, 0x00, 0x04, 0x1A, 0x00, 0x00, 0x00, 0x00]
+        );
     }
 
     #[test]
@@ -301,7 +304,10 @@ mod tests {
         // First 6 slots become scancodes 0x04..=0x09; slot 6 (= 7th
         // key) overflows the array, but we trigger the phantom fill at
         // the boundary, so the entire 6-slot region becomes ErrorRollOver.
-        assert_eq!(r.data, vec![0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01]);
+        assert_eq!(
+            &r.data[..KEYBOARD_REPORT_SIZE],
+            &[0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01]
+        );
     }
 
     #[test]

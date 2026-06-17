@@ -34,6 +34,9 @@ const GAMEPAD_REPORT_SIZE: usize = 15;
 /// Mask of the 16 "transmit as-is" button bits (the lower 16 of the
 /// internal 32-bit button bitmap).
 const BUTTONS_MASK: u32 = 0xFFFF;
+/// Full button bitmap mask supported by the engine (`lower 16` normal
+/// buttons + `4` dpad flags).
+const BUTTONS_ALL_MASK: u32 = BUTTONS_MASK | 0x000F_0000;
 
 /// Bit set when a gamepad slot is free. The first 16 bits of the button
 /// state stay at 0, but the dpad bits must be cleared so a freed slot
@@ -172,16 +175,178 @@ impl GamepadHid {
         let slot_idx = self
             .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        Ok(self
+            .button_event_slot_idx(slot_idx, button, pressed)
+            .unwrap_or_else(|| self.slot_to_input_message_from_slot_idx(slot_idx)))
+    }
+
+    /// Replace the entire button bitmap for `gamepad_id` in one call.
+    ///
+    /// Bits are interpreted as a `GamepadButton` bitmap (`u32`), with
+    /// upper nibble bits used for dpad state and lower 16 bits used
+    /// for standard buttons.
+    pub fn buttons_event(
+        &mut self,
+        gamepad_id: u32,
+        buttons: u32,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
+            .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        Ok(self
+            .buttons_event_slot_idx(slot_idx, buttons)
+            .unwrap_or_else(|| self.slot_to_input_message_from_slot_idx(slot_idx)))
+    }
+
+    /// Apply all standard gamepad inputs in one report (buttons + sticks + triggers).
+    pub fn full_state_event(
+        &mut self,
+        gamepad_id: u32,
+        buttons: u32,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
+            .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        Ok(self
+            .full_state_event_slot_idx(
+                slot_idx,
+                buttons,
+                left_x,
+                left_y,
+                right_x,
+                right_y,
+                left_trigger,
+                right_trigger,
+            )
+            .unwrap_or_else(|| {
+                let slot = &self.slots[slot_idx];
+                self.slot_to_input_message(Self::slot_hid_id(slot_idx), slot)
+            }))
+    }
+
+    #[inline]
+    pub(crate) fn full_state_event_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        buttons: u32,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Option<ControlMessage> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
+        self.full_state_event_slot_idx_raw(slot_idx, buttons, left_x, left_y, right_x, right_y, left_trigger, right_trigger)
+            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn full_state_event_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        buttons: u32,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
+        let slot = &mut self.slots[slot_idx];
+        let next_buttons = buttons & BUTTONS_ALL_MASK;
+        let lx = axis_rescale(left_x);
+        let ly = axis_rescale(left_y);
+        let rx = axis_rescale(right_x);
+        let ry = axis_rescale(right_y);
+        let lt = (left_trigger.max(0) as u16).min(0x7FFF);
+        let rt = (right_trigger.max(0) as u16).min(0x7FFF);
+
+        if slot.buttons == next_buttons
+            && slot.axis_left_x == lx
+            && slot.axis_left_y == ly
+            && slot.axis_right_x == rx
+            && slot.axis_right_y == ry
+            && slot.axis_left_trigger == lt
+            && slot.axis_right_trigger == rt
+        {
+            return None;
+        }
+
+        slot.buttons = next_buttons;
+        slot.axis_left_x = lx;
+        slot.axis_left_y = ly;
+        slot.axis_right_x = rx;
+        slot.axis_right_y = ry;
+        slot.axis_left_trigger = lt;
+        slot.axis_right_trigger = rt;
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+    }
+
+    #[inline]
+    pub(crate) fn buttons_event_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        buttons: u32,
+    ) -> Option<ControlMessage> {
+        self.buttons_event_slot_idx_raw(slot_idx, buttons)
+            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn buttons_event_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        buttons: u32,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
+        let slot = &mut self.slots[slot_idx];
+        let next = buttons & BUTTONS_ALL_MASK;
+        if slot.buttons == next {
+            return None;
+        }
+        slot.buttons = next;
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+    }
+
+    #[inline]
+    pub(crate) fn button_event_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        button: GamepadButton,
+        pressed: bool,
+    ) -> Option<ControlMessage> {
+        self.button_event_slot_idx_raw(slot_idx, button, pressed)
+            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn button_event_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        button: GamepadButton,
+        pressed: bool,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
         let slot = &mut self.slots[slot_idx];
         let bit = button as u32;
+        let currently_pressed = slot.buttons & bit != 0;
+        if currently_pressed == pressed {
+            return None;
+        }
         if pressed {
             slot.buttons |= bit;
         } else {
             slot.buttons &= !bit;
         }
-        let hid_id = Self::slot_hid_id(slot_idx);
-        let data = slot_report_bytes(hid_id, slot);
-        Ok(to_input_message(hid_id, &data))
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
     }
 
     /// Apply an axis event. Triggers are always positive; sticks are
@@ -195,28 +360,381 @@ impl GamepadHid {
         let slot_idx = self
             .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        debug_assert!(match axis {
+            GamepadAxis::LeftX
+            | GamepadAxis::LeftY
+            | GamepadAxis::RightX
+            | GamepadAxis::RightY
+            | GamepadAxis::LeftTrigger
+            | GamepadAxis::RightTrigger => true,
+        });
+        Ok(self
+            .axis_event_slot_idx(slot_idx, axis, value)
+            .unwrap_or_else(|| self.slot_to_input_message_from_slot_idx(slot_idx)))
+    }
+
+    #[inline]
+    pub(crate) fn axis_event_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        axis: GamepadAxis,
+        value: i16,
+    ) -> Option<ControlMessage> {
+        self.axis_event_slot_idx_raw(slot_idx, axis, value)
+            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn axis_event_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        axis: GamepadAxis,
+        value: i16,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
         let slot = &mut self.slots[slot_idx];
         match axis as i16 {
-            x if x == SC_GAMEPAD_AXIS_LEFTX => slot.axis_left_x = axis_rescale(value),
-            x if x == SC_GAMEPAD_AXIS_LEFTY => slot.axis_left_y = axis_rescale(value),
-            x if x == SC_GAMEPAD_AXIS_RIGHTX => slot.axis_right_x = axis_rescale(value),
-            x if x == SC_GAMEPAD_AXIS_RIGHTY => slot.axis_right_y = axis_rescale(value),
+            x if x == SC_GAMEPAD_AXIS_LEFTX => {
+                let new = axis_rescale(value);
+                if slot.axis_left_x == new {
+                    return None;
+                }
+                slot.axis_left_x = new;
+            }
+            x if x == SC_GAMEPAD_AXIS_LEFTY => {
+                let new = axis_rescale(value);
+                if slot.axis_left_y == new {
+                    return None;
+                }
+                slot.axis_left_y = new;
+            }
+            x if x == SC_GAMEPAD_AXIS_RIGHTX => {
+                let new = axis_rescale(value);
+                if slot.axis_right_x == new {
+                    return None;
+                }
+                slot.axis_right_x = new;
+            }
+            x if x == SC_GAMEPAD_AXIS_RIGHTY => {
+                let new = axis_rescale(value);
+                if slot.axis_right_y == new {
+                    return None;
+                }
+                slot.axis_right_y = new;
+            }
             x if x == SC_GAMEPAD_AXIS_LEFT_TRIGGER => {
-                slot.axis_left_trigger = (value.max(0) as u16).min(0x7FFF);
+                let new = (value.max(0) as u16).min(0x7FFF);
+                if slot.axis_left_trigger == new {
+                    return None;
+                }
+                slot.axis_left_trigger = new;
             }
             x if x == SC_GAMEPAD_AXIS_RIGHT_TRIGGER => {
-                slot.axis_right_trigger = (value.max(0) as u16).min(0x7FFF);
+                let new = (value.max(0) as u16).min(0x7FFF);
+                if slot.axis_right_trigger == new {
+                    return None;
+                }
+                slot.axis_right_trigger = new;
             }
-            _ => return Err(Error::UnknownGamepad(0)), // unknown axis
+            _ => {
+                return None;
+            }
         }
-        let hid_id = Self::slot_hid_id(slot_idx);
-        let data = slot_report_bytes(hid_id, slot);
-        Ok(to_input_message(hid_id, &data))
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+    }
+
+    /// Apply both left-stick axes in one report (single UHID_INPUT).
+    pub fn left_stick_raw(
+        &mut self,
+        gamepad_id: u32,
+        x: i16,
+        y: i16,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
+            .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        Ok(self
+            .left_stick_raw_slot_idx(slot_idx, x, y)
+            .unwrap_or_else(|| self.slot_to_input_message_from_slot_idx(slot_idx)))
+    }
+
+    #[inline]
+    pub(crate) fn left_stick_raw_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        x: i16,
+        y: i16,
+    ) -> Option<ControlMessage> {
+        self.left_stick_raw_slot_idx_raw(slot_idx, x, y)
+            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn left_stick_raw_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        x: i16,
+        y: i16,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
+        let slot = &mut self.slots[slot_idx];
+        let lx = axis_rescale(x);
+        let ly = axis_rescale(y);
+        if slot.axis_left_x == lx && slot.axis_left_y == ly {
+            return None;
+        }
+        slot.axis_left_x = lx;
+        slot.axis_left_y = ly;
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+    }
+
+    /// Apply both right-stick axes in one report (single UHID_INPUT).
+    pub fn right_stick_raw(
+        &mut self,
+        gamepad_id: u32,
+        x: i16,
+        y: i16,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
+            .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        Ok(self
+            .right_stick_raw_slot_idx(slot_idx, x, y)
+            .unwrap_or_else(|| self.slot_to_input_message_from_slot_idx(slot_idx)))
+    }
+
+    #[inline]
+    pub(crate) fn right_stick_raw_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        x: i16,
+        y: i16,
+    ) -> Option<ControlMessage> {
+        self.right_stick_raw_slot_idx_raw(slot_idx, x, y)
+            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn right_stick_raw_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        x: i16,
+        y: i16,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
+        let slot = &mut self.slots[slot_idx];
+        let rx = axis_rescale(x);
+        let ry = axis_rescale(y);
+        if slot.axis_right_x == rx && slot.axis_right_y == ry {
+            return None;
+        }
+        slot.axis_right_x = rx;
+        slot.axis_right_y = ry;
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+    }
+
+    /// Apply both triggers in one report (single UHID_INPUT).
+    pub fn triggers_raw(
+        &mut self,
+        gamepad_id: u32,
+        left: i16,
+        right: i16,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
+            .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        Ok(self
+            .triggers_raw_slot_idx(slot_idx, left, right)
+            .unwrap_or_else(|| self.slot_to_input_message_from_slot_idx(slot_idx)))
+    }
+
+    #[inline]
+    pub(crate) fn triggers_raw_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        left: i16,
+        right: i16,
+    ) -> Option<ControlMessage> {
+        self.triggers_raw_slot_idx_raw(slot_idx, left, right)
+            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn triggers_raw_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        left: i16,
+        right: i16,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
+        let slot = &mut self.slots[slot_idx];
+        let lt = (left.max(0) as u16).min(0x7FFF);
+        let rt = (right.max(0) as u16).min(0x7FFF);
+        if slot.axis_left_trigger == lt && slot.axis_right_trigger == rt {
+            return None;
+        }
+        slot.axis_left_trigger = lt;
+        slot.axis_right_trigger = rt;
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+    }
+
+    /// Apply both sticks and both triggers in one report (single
+    /// UHID_INPUT) when the full gamepad frame updates every tick.
+    pub fn set_sticks_raw(
+        &mut self,
+        gamepad_id: u32,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
+            .ok_or(Error::UnknownGamepad(gamepad_id))?;
+        Ok(self
+            .set_sticks_raw_slot_idx(
+                slot_idx,
+                left_x,
+                left_y,
+                right_x,
+                right_y,
+                left_trigger,
+                right_trigger,
+            )
+            .unwrap_or_else(|| self.slot_to_input_message_from_slot_idx(slot_idx)))
+    }
+
+    #[inline]
+    pub(crate) fn set_sticks_raw_slot_idx(
+        &mut self,
+        slot_idx: usize,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Option<ControlMessage> {
+        self.set_sticks_raw_slot_idx_raw(
+            slot_idx,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        )
+        .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+    }
+
+    #[inline]
+    pub(crate) fn set_sticks_raw_slot_idx_raw(
+        &mut self,
+        slot_idx: usize,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Option<(u16, [u8; GAMEPAD_REPORT_SIZE])> {
+        debug_assert!(slot_idx < MAX_GAMEPADS);
+        let slot = &mut self.slots[slot_idx];
+        let lx = axis_rescale(left_x);
+        let ly = axis_rescale(left_y);
+        let rx = axis_rescale(right_x);
+        let ry = axis_rescale(right_y);
+        let lt = (left_trigger.max(0) as u16).min(0x7FFF);
+        let rt = (right_trigger.max(0) as u16).min(0x7FFF);
+
+        if slot.axis_left_x == lx
+            && slot.axis_left_y == ly
+            && slot.axis_right_x == rx
+            && slot.axis_right_y == ry
+            && slot.axis_left_trigger == lt
+            && slot.axis_right_trigger == rt
+        {
+            return None;
+        }
+
+        slot.axis_left_x = lx;
+        slot.axis_left_y = ly;
+        slot.axis_right_x = rx;
+        slot.axis_right_y = ry;
+        slot.axis_left_trigger = lt;
+        slot.axis_right_trigger = rt;
+        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+    }
+
+    #[inline]
+    pub(crate) fn close_slot_idx(&mut self, slot_idx: usize) -> Result<ControlMessage> {
+        if slot_idx >= MAX_GAMEPADS {
+            return Err(Error::UnknownGamepad(0));
+        }
+        let slot = &mut self.slots[slot_idx];
+        if slot.gamepad_id == GAMEPAD_ID_INVALID {
+            return Err(Error::UnknownGamepad(0));
+        }
+        slot.gamepad_id = GAMEPAD_ID_INVALID;
+        Ok(ControlMessage::UhidDestroy {
+            id: Self::slot_hid_id(slot_idx),
+        })
+    }
+
+    #[inline]
+    fn slot_to_payload(&self, slot: &GamepadSlot) -> [u8; GAMEPAD_REPORT_SIZE] {
+        let mut data = [0u8; GAMEPAD_REPORT_SIZE];
+        data[0..2].copy_from_slice(&slot.axis_left_x.to_le_bytes());
+        data[2..4].copy_from_slice(&slot.axis_left_y.to_le_bytes());
+        data[4..6].copy_from_slice(&slot.axis_right_x.to_le_bytes());
+        data[6..8].copy_from_slice(&slot.axis_right_y.to_le_bytes());
+        data[8..10].copy_from_slice(&slot.axis_left_trigger.to_le_bytes());
+        data[10..12].copy_from_slice(&slot.axis_right_trigger.to_le_bytes());
+        let btn16 = (slot.buttons & BUTTONS_MASK) as u16;
+        data[12..14].copy_from_slice(&btn16.to_le_bytes());
+        data[14] = dpad_hat_value(slot.buttons);
+        data
+    }
+
+    #[inline]
+    fn slot_to_input_message_from_payload(
+        &self,
+        hid_id: u16,
+        payload: [u8; GAMEPAD_REPORT_SIZE],
+    ) -> ControlMessage {
+        let mut data = [0u8; HID_MAX_SIZE];
+        data[..GAMEPAD_REPORT_SIZE].copy_from_slice(&payload);
+        ControlMessage::UhidInput(UhidInput {
+            id: hid_id,
+            size: GAMEPAD_REPORT_SIZE as u16,
+            data,
+        })
+    }
+
+    #[inline]
+    fn slot_to_input_message_from_slot_idx(&self, slot_idx: usize) -> ControlMessage {
+        self.slot_to_input_message(
+            Self::slot_hid_id(slot_idx),
+            &self.slots[slot_idx],
+        )
+    }
+
+    #[inline]
+    fn slot_to_input_message(&self, hid_id: u16, slot: &GamepadSlot) -> ControlMessage {
+        let mut data = [0u8; HID_MAX_SIZE];
+        data[..GAMEPAD_REPORT_SIZE].copy_from_slice(&self.slot_to_payload(slot));
+        ControlMessage::UhidInput(UhidInput {
+            id: hid_id,
+            size: GAMEPAD_REPORT_SIZE as u16,
+            data,
+        })
     }
 
     /// Convert a [`HidReport`] into a UHID_INPUT [`ControlMessage`].
     pub fn to_input_message(&self, report: &HidReport) -> ControlMessage {
-        to_input_message(report.hid_id, &report.data)
+        to_input_message(report)
     }
 
     /// Number of gamepads currently registered.
@@ -284,27 +802,12 @@ fn axis_rescale(v: i16) -> u16 {
     (v as i32 + 0x8000) as u16
 }
 
-fn slot_report_bytes(hid_id: u16, slot: &GamepadSlot) -> Vec<u8> {
-    let mut data = vec![0u8; GAMEPAD_REPORT_SIZE];
-    data[0..2].copy_from_slice(&slot.axis_left_x.to_le_bytes());
-    data[2..4].copy_from_slice(&slot.axis_left_y.to_le_bytes());
-    data[4..6].copy_from_slice(&slot.axis_right_x.to_le_bytes());
-    data[6..8].copy_from_slice(&slot.axis_right_y.to_le_bytes());
-    data[8..10].copy_from_slice(&slot.axis_left_trigger.to_le_bytes());
-    data[10..12].copy_from_slice(&slot.axis_right_trigger.to_le_bytes());
-    let btn16 = (slot.buttons & BUTTONS_MASK) as u16;
-    data[12..14].copy_from_slice(&btn16.to_le_bytes());
-    data[14] = dpad_hat_value(slot.buttons);
-    let _ = hid_id;
-    data
-}
-
-fn to_input_message(hid_id: u16, data: &[u8]) -> ControlMessage {
+fn to_input_message(report: &HidReport) -> ControlMessage {
     let mut buf = [0u8; HID_MAX_SIZE];
-    let n = data.len().min(HID_MAX_SIZE);
-    buf[..n].copy_from_slice(&data[..n]);
+    let n = (report.size as usize).min(HID_MAX_SIZE);
+    buf[..n].copy_from_slice(&report.data[..n]);
     ControlMessage::UhidInput(UhidInput {
-        id: hid_id,
+        id: report.hid_id,
         size: n as u16,
         data: buf,
     })
@@ -449,5 +952,49 @@ mod tests {
             assert_eq!(GamepadHid::slot_from_hid_id(hid), Some(i));
         }
         assert_eq!(GamepadHid::slot_from_hid_id(99), None);
+    }
+
+    #[test]
+    fn buttons_event_updates_button_frame_once() {
+        let mut g = build();
+        g.open(1, None).unwrap();
+        let buttons = GamepadButton::South as u32 | GamepadButton::DpadUp as u32;
+        let slot_idx = GamepadHid::slot_from_hid_id(HID_ID_GAMEPAD_FIRST).unwrap();
+        let msg = g
+            .buttons_event_slot_idx(slot_idx, buttons)
+            .expect("initial button-frame send");
+        assert!(g.buttons_event_slot_idx(slot_idx, buttons).is_none());
+        match msg {
+            ControlMessage::UhidInput(i) => {
+                assert_eq!(i.data[12], GamepadButton::South as u8);
+                assert_eq!(i.data[14], 1);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn full_state_event_updates_all_fields_and_dedupes() {
+        let mut g = build();
+        g.open(1, None).unwrap();
+        let slot_idx = GamepadHid::slot_from_hid_id(HID_ID_GAMEPAD_FIRST).unwrap();
+        let msg = g
+            .full_state_event_slot_idx(slot_idx, GamepadButton::South as u32, -3000, 1200, -700, 900, 0x7fff, 0x1234)
+            .expect("initial full-state send");
+        assert!(g
+            .full_state_event_slot_idx(slot_idx, GamepadButton::South as u32, -3000, 1200, -700, 900, 0x7fff, 0x1234)
+            .is_none());
+        match msg {
+            ControlMessage::UhidInput(i) => {
+                // axis and trigger bytes should contain expected values.
+                assert_eq!(i.size, 15);
+                assert_eq!(i.data[0..2], axis_rescale(-3000).to_le_bytes());
+                assert_eq!(i.data[2..4], axis_rescale(1200).to_le_bytes());
+                assert_eq!(i.data[4..6], axis_rescale(-700).to_le_bytes());
+                assert_eq!(i.data[6..8], axis_rescale(900).to_le_bytes());
+                assert_eq!(i.data[12], GamepadButton::South as u8);
+            }
+            _ => panic!(),
+        }
     }
 }

@@ -11,22 +11,38 @@ use crate::control::message::ControlMessage;
 use crate::error::Result;
 use crate::error::TransportWrite;
 
+/// Internal helper to avoid allocating a new buffer per message during
+/// batch writes.
+fn send_one_with_buf<W: TransportWrite>(
+    transport: &mut W,
+    msg: &ControlMessage,
+    buf: &mut Vec<u8>,
+) -> Result<()> {
+    buf.clear();
+    msg.serialize_into(buf)?;
+    transport.write_all(buf)?;
+    transport.flush()
+}
+
 /// Send a single control message over the transport.
 pub fn send_one<W: TransportWrite>(transport: &mut W, msg: &ControlMessage) -> Result<()> {
-    let bytes = msg.serialize()?;
-    transport.write_all(&bytes)?;
-    transport.flush()
+    let mut buf = Vec::with_capacity(64);
+    send_one_with_buf(transport, msg, &mut buf)
 }
 
 /// Send a batch of control messages in order, returning the first error
 /// if any. Non-droppable messages (UHID_CREATE / UHID_DESTROY) are not
-/// retried — the caller is expected to retry the whole batch on
-/// failure.
+/// retried — the caller is expected to retry the whole batch on failure.
 pub fn send_batch<W: TransportWrite>(transport: &mut W, msgs: &[ControlMessage]) -> Result<()> {
+    let mut buf = Vec::with_capacity(msgs.len().saturating_mul(64));
     for m in msgs {
-        send_one(transport, m)?;
+        m.serialize_into(&mut buf)?;
     }
-    Ok(())
+    if buf.is_empty() {
+        return Ok(());
+    }
+    transport.write_all(&buf)?;
+    transport.flush()
 }
 
 /// Convenience: open a TCP connection to the given `host:port` (typical

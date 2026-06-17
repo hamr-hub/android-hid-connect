@@ -23,9 +23,10 @@ use std::io::Read;
 use std::time::{Duration, Instant};
 
 use android_hid_connect::client::{HidClient, HidCommand, HidDispatcher};
+use android_hid_connect::session::GamepadFrameRaw;
 use android_hid_connect::session::{HidSession, OpenRequest};
 use android_hid_connect::transport::{open_tcp, MockTransport};
-use android_hid_connect::types::{GamepadAxis, Modifiers, Scancode};
+use android_hid_connect::types::{GamepadButton, Modifiers, Scancode};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -179,20 +180,40 @@ fn main() -> Result<()> {
     let s2 = HidSession::open(mock, OpenRequest::gamepad_only())?;
     let (client, dispatcher): (HidClient, HidDispatcher<_>) = s2.into_client_with_bound(256)?;
 
-    let c = client.clone();
+    let batch_client = client.clone();
     let producer = std::thread::spawn(move || {
         let mut sent = 0usize;
+        const BATCH: usize = 32;
+        let mut batch = Vec::with_capacity(BATCH);
         for i in 0..1000u32 {
             let v = ((i % 200) as f32 / 100.0) - 1.0;
-            if c.send(HidCommand::GamepadStick {
-                axis: GamepadAxis::LeftX,
-                value: v,
-            })
-            .is_err()
-            {
-                break;
+            let frame_buttons = if i & 1 == 0 {
+                GamepadButton::South as u32
+            } else {
+                GamepadButton::South as u32 | GamepadButton::DpadRight as u32
+            };
+            batch.push(GamepadFrameRaw {
+                buttons: frame_buttons,
+                left_x: (v * 32767.0) as i16,
+                left_y: (-v * 16000.0) as i16,
+                right_x: (v * 20000.0) as i16,
+                right_y: ((-v) * 20000.0) as i16,
+                left_trigger: (i % 16384) as i16,
+                right_trigger: 0,
+            });
+            if batch.len() == BATCH {
+                if batch_client.send_frame_batch(batch).is_err() {
+                    break;
+                }
+                sent += BATCH;
+                batch = Vec::with_capacity(BATCH);
             }
-            sent += 1;
+        }
+        if !batch.is_empty() {
+            let sent_now = batch.len();
+            if batch_client.send_frame_batch(batch).is_ok() {
+                sent += sent_now;
+            }
         }
         sent
     });
@@ -224,7 +245,7 @@ fn main() -> Result<()> {
     let uhid_inputs = bytes.iter().filter(|b| **b == 13).count();
     let start_apps = bytes.iter().filter(|b| **b == 16).count();
 
-    println!("  >> producer thread sent {sent_count} stick jitter events");
+    println!("  >> batch producer thread sent {sent_count} stick jitter events");
     println!("  >> consumer thread sent {launched} launch_app events");
     println!(
         "  >> dispatcher wrote {} bytes ({} UHID_INPUT, {} START_APP frames)",

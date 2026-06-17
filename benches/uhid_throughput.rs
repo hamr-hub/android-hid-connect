@@ -176,6 +176,310 @@ fn bench_100_msg_raw_vs_coalesced(c: &mut Criterion) {
     g.finish();
 }
 
+fn bench_gamepad_frame_pack_and_packed_batch(c: &mut Criterion) {
+    use android_hid_connect::session::{
+        GamepadFrameRaw, GAMEPAD_FRAME_BYTES, HidSession, OpenRequest,
+    };
+    use android_hid_connect::GamepadButton;
+    use android_hid_connect::transport::MockTransport;
+
+    const FRAME_COUNT: usize = 512;
+    let mut packed_frames = Vec::<[u8; GAMEPAD_FRAME_BYTES]>::with_capacity(FRAME_COUNT);
+    let mut raw_frames = Vec::<GamepadFrameRaw>::with_capacity(FRAME_COUNT);
+
+    for i in 0..FRAME_COUNT {
+        let buttons = (i as u32) & 0x0FFF;
+        let left_x = (i as i16).wrapping_mul(32) % 32767;
+        let left_y = (i as i16).wrapping_mul(19) % 32767;
+        let right_x = (i as i16).wrapping_mul(17) % 32767;
+        let right_y = (i as i16).wrapping_mul(11) % 32767;
+        let left_trigger = (i as i16).min(0x7FFF);
+        let right_trigger = ((i as i16) * 3 / 2).min(0x7FFF);
+        let frame = GamepadFrameRaw::new(
+            buttons,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        );
+        packed_frames.push(frame.pack());
+        raw_frames.push(frame);
+    }
+
+    let mut packed_cursor = 0u8;
+    let mut pack_state = GamepadFrameRaw::new(
+        GamepadButton::South as u32,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    );
+
+    c.bench_function("gamepad frame pack", |b| {
+        b.iter(|| {
+            pack_state.left_x = pack_state.left_x.wrapping_add(1);
+            pack_state.left_y = pack_state.left_y.wrapping_add(2);
+            let packed = pack_state.pack();
+            packed_cursor = packed_cursor.wrapping_add(packed[0]);
+            std::hint::black_box((packed, packed_cursor));
+        });
+    });
+
+    c.bench_function("session set_frame_raw_unchecked single", |b| {
+        let frame = raw_frames[0];
+        let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
+        b.iter(|| {
+            s.set_frame_raw_unchecked(
+                frame.buttons,
+                frame.left_x,
+                frame.left_y,
+                frame.right_x,
+                frame.right_y,
+                frame.left_trigger,
+                frame.right_trigger,
+            )
+            .unwrap();
+            s.flush_now().unwrap();
+            black_box(s.stats());
+        });
+        s.close().unwrap();
+    });
+
+    c.bench_function("session set_frame_raw_unchecked single (direct)", |b| {
+        let frame = raw_frames[0];
+        let mut s = HidSession::open(
+            MockTransport::new(),
+            OpenRequest::gamepad_only_realtime(),
+        )
+        .unwrap();
+        b.iter(|| {
+            s.set_frame_raw_unchecked(
+                frame.buttons,
+                frame.left_x,
+                frame.left_y,
+                frame.right_x,
+                frame.right_y,
+                frame.left_trigger,
+                frame.right_trigger,
+            )
+            .unwrap();
+            black_box(s.stats());
+        });
+        s.close().unwrap();
+    });
+
+    c.bench_function("session set_frame_raw_packed_batch 512", |b| {
+        let frames = &packed_frames;
+        b.iter(|| {
+            let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
+            s.set_frame_raw_packed_batch(frames).unwrap();
+            s.flush_now().unwrap();
+            black_box(s.stats());
+            s.close().unwrap();
+        });
+    });
+
+    c.bench_function("session set_frame_raw_batch_deduped 512", |b| {
+        let frames = &raw_frames;
+        b.iter(|| {
+            let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
+            s.set_frame_raw_batch(frames).unwrap();
+            s.flush_now().unwrap();
+            black_box(s.stats());
+            s.close().unwrap();
+        });
+    });
+
+    c.bench_function("session set_frame_raw_batch_unchecked 512", |b| {
+        let frames = &raw_frames;
+        b.iter(|| {
+            let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
+            s.set_frame_raw_batch_unchecked(frames).unwrap();
+            s.flush_now().unwrap();
+            black_box(s.stats());
+            s.close().unwrap();
+        });
+    });
+
+    c.bench_function("session set_frame_raw_packed_batch 512 (direct)", |b| {
+        let frames = &packed_frames;
+        b.iter(|| {
+            let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+            s.set_frame_raw_packed_batch(frames).unwrap();
+            black_box(s.stats());
+            s.close().unwrap();
+        });
+    });
+
+    c.bench_function("session set_frame_raw_batch_unchecked 512 (direct)", |b| {
+        let frames = &raw_frames;
+        b.iter(|| {
+            let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+            s.set_frame_raw_batch_unchecked(frames).unwrap();
+            black_box(s.stats());
+            s.close().unwrap();
+        });
+    });
+
+    c.bench_function("session set_frame_raw_batch_deduped 512 (direct)", |b| {
+        let frames = &raw_frames;
+        b.iter(|| {
+            let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+            s.set_frame_raw_batch(frames).unwrap();
+            black_box(s.stats());
+            s.close().unwrap();
+        });
+    });
+
+    c.bench_function("session set_frame_raw_batch_unchecked 512 (coalesce steady-state)", |b| {
+        let frames = &raw_frames;
+        let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
+        b.iter(|| {
+            s.set_frame_raw_batch_unchecked(frames).unwrap();
+            s.flush_now().unwrap();
+            black_box(s.stats());
+        });
+        s.close().unwrap();
+    });
+
+    c.bench_function("session set_frame_raw_batch_unchecked 512 (direct steady-state)", |b| {
+        let frames = &raw_frames;
+        let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+        b.iter(|| {
+            s.set_frame_raw_batch_unchecked(frames).unwrap();
+            black_box(s.stats());
+        });
+        s.close().unwrap();
+    });
+}
+
+fn bench_hidclient_dispatch_overhead(c: &mut Criterion) {
+    use android_hid_connect::client::GamepadFrameBatcher;
+    use android_hid_connect::session::{GamepadFrameRaw, HidSession, OpenRequest};
+    use android_hid_connect::transport::MockTransport;
+
+    let frame = GamepadFrameRaw::new(0x0001, 100, 0, 0, 0, 0, 0);
+    let batch_frames: Vec<GamepadFrameRaw> = (0..32u16)
+        .map(|i| GamepadFrameRaw::new(i as u32, i as i16, i as i16 * 2, i as i16 * 3, i as i16 * 4, 0, 0))
+        .collect();
+
+    c.bench_function("session set_frame_raw_unchecked one frame (steady-state)", |b| {
+        let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+        b.iter(|| {
+            s.set_frame_raw_unchecked(
+                frame.buttons,
+                frame.left_x,
+                frame.left_y,
+                frame.right_x,
+                frame.right_y,
+                frame.left_trigger,
+                frame.right_trigger,
+            )
+            .unwrap();
+            black_box(s.stats());
+        });
+        s.close().unwrap();
+    });
+
+    c.bench_function("client send_frame_unchecked one frame (steady-state)", |b| {
+        let (client, dispatcher) = HidSession::open(
+            MockTransport::new(),
+            OpenRequest::gamepad_only_realtime(),
+        )
+        .unwrap()
+        .into_client_with_bound(65536)
+        .unwrap();
+
+        b.iter(|| {
+            client.send_frame_unchecked(black_box(frame)).unwrap();
+        });
+
+        client.close();
+        let t = dispatcher.join().unwrap();
+        black_box(t.into_bytes());
+    });
+
+    c.bench_function("client gamepad frame batcher unchecked 32", |b| {
+        let (client, dispatcher) = HidSession::open(
+            MockTransport::new(),
+            OpenRequest::gamepad_only_realtime(),
+        )
+        .unwrap()
+        .into_client_with_bound(65536)
+        .unwrap();
+
+        b.iter(|| {
+            let mut batcher = GamepadFrameBatcher::unchecked(&client, 32);
+            batcher.push_many(batch_frames.iter().copied()).unwrap();
+        });
+
+        client.close();
+        let t = dispatcher.join().unwrap();
+        black_box(t.into_bytes());
+    });
+
+    c.bench_function("client gamepad frame packed batch fixed 32", |b| {
+        use android_hid_connect::session::GAMEPAD_FRAME_BYTES;
+        use android_hid_connect::client::PackedGamepadFrameBatcher;
+
+        let mut packed_frames = [[0u8; GAMEPAD_FRAME_BYTES]; 32];
+        for i in 0..packed_frames.len() {
+            packed_frames[i][0] = (i as u8).wrapping_mul(3);
+        }
+
+        let (client, dispatcher) = HidSession::open(
+            MockTransport::new(),
+            OpenRequest::gamepad_only_realtime(),
+        )
+        .unwrap()
+        .into_client_with_bound(65536)
+        .unwrap();
+
+        b.iter(|| {
+            let frames = packed_frames;
+            client.send_frame_packed_batch_fixed(32, frames).unwrap();
+            black_box(client);
+        });
+
+        client.close();
+        let t = dispatcher.join().unwrap();
+        black_box(t.into_bytes());
+    });
+
+    c.bench_function("client gamepad frame packed batcher 32", |b| {
+        use android_hid_connect::client::PackedGamepadFrameBatcher;
+        use android_hid_connect::session::GAMEPAD_FRAME_BYTES;
+
+        let mut packed_frames = Vec::with_capacity(32);
+        for i in 0u8..32 {
+            let mut f = [0u8; GAMEPAD_FRAME_BYTES];
+            f[0] = i.wrapping_mul(2);
+            packed_frames.push(f);
+        }
+
+        let (client, dispatcher) = HidSession::open(
+            MockTransport::new(),
+            OpenRequest::gamepad_only_realtime(),
+        )
+        .unwrap()
+        .into_client_with_bound(65536)
+        .unwrap();
+
+        b.iter(|| {
+            let mut batcher = PackedGamepadFrameBatcher::new(&client, 32);
+            batcher.push_many(packed_frames.iter().copied()).unwrap();
+        });
+
+        client.close();
+        let t = dispatcher.join().unwrap();
+        black_box(t.into_bytes());
+    });
+}
+
 criterion_group!(
     benches,
     bench_keyboard_input,
@@ -183,5 +487,7 @@ criterion_group!(
     bench_send_to_mock,
     bench_coalesced_burst,
     bench_100_msg_raw_vs_coalesced,
+    bench_gamepad_frame_pack_and_packed_batch,
+    bench_hidclient_dispatch_overhead,
 );
 criterion_main!(benches);

@@ -14,14 +14,18 @@
 
 use std::time::Duration;
 
-use crate::coalesce::CoalescingWriter;
+use crate::coalesce::{
+    CoalescingWriter, DEFAULT_HARD_LIMIT, DEFAULT_WINDOW, DIRECT_GAMEPAD_BATCH_FRAMES,
+};
 use crate::control::message::{ControlMessage, InjectTouchEvent};
 use crate::error::{Error, Result, TransportWrite};
 use crate::hid::gamepad::GamepadHid;
 use crate::hid::keyboard::KeyboardHid;
 use crate::hid::mouse::MouseHid;
 use crate::hid::HidDevice;
-use crate::types::{GamepadAxis, GamepadButton, Modifiers, Scancode, HID_ID_GAMEPAD_FIRST};
+use crate::types::{
+    dpad_hat_value, GamepadAxis, GamepadButton, HID_ID_GAMEPAD_FIRST, Modifiers, Scancode,
+};
 
 /// Which HID devices the session should open. Touch events are always
 /// available (no UHID device needed) — they ride on the same control
@@ -31,14 +35,17 @@ use crate::types::{GamepadAxis, GamepadButton, Modifiers, Scancode, HID_ID_GAMEP
 /// `coalesce` (default `true`) wraps the transport in a
 /// [`CoalescingWriter`] so that bursty `UhidInput` traffic (e.g. 1 kHz
 /// gamepad stick jitter) is batched into a single `write_all` per
-/// 1 ms window. Set to `false` for power users who want every message
-/// to hit the wire immediately.
+/// 1 ms window. Set to `false` for power users who want every
+/// message to skip batching and write immediately. For the lowest
+/// latency gamepad loop, use [`OpenRequest::gamepad_only_realtime`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct OpenRequest {
     pub kbd: bool,
     pub mouse: bool,
     pub gamepad: bool,
     pub coalesce: bool,
+    pub coalesce_window: Duration,
+    pub coalesce_hard_limit: usize,
 }
 
 impl OpenRequest {
@@ -48,6 +55,8 @@ impl OpenRequest {
             mouse: false,
             gamepad: false,
             coalesce: true,
+            coalesce_window: DEFAULT_WINDOW,
+            coalesce_hard_limit: DEFAULT_HARD_LIMIT,
         }
     }
     pub const fn all() -> Self {
@@ -56,6 +65,8 @@ impl OpenRequest {
             mouse: true,
             gamepad: true,
             coalesce: true,
+            coalesce_window: DEFAULT_WINDOW,
+            coalesce_hard_limit: DEFAULT_HARD_LIMIT,
         }
     }
     pub const fn kbd_only() -> Self {
@@ -64,6 +75,8 @@ impl OpenRequest {
             mouse: false,
             gamepad: false,
             coalesce: true,
+            coalesce_window: DEFAULT_WINDOW,
+            coalesce_hard_limit: DEFAULT_HARD_LIMIT,
         }
     }
     pub const fn mouse_only() -> Self {
@@ -72,6 +85,8 @@ impl OpenRequest {
             mouse: true,
             gamepad: false,
             coalesce: true,
+            coalesce_window: DEFAULT_WINDOW,
+            coalesce_hard_limit: DEFAULT_HARD_LIMIT,
         }
     }
     pub const fn gamepad_only() -> Self {
@@ -80,7 +95,46 @@ impl OpenRequest {
             mouse: false,
             gamepad: true,
             coalesce: true,
+            coalesce_window: DEFAULT_WINDOW,
+            coalesce_hard_limit: DEFAULT_HARD_LIMIT,
         }
+    }
+    /// Open only a gamepad with immediate writes (no coalescing), tuned
+    /// for the lowest-latency control loops.
+    pub const fn gamepad_only_realtime() -> Self {
+        Self {
+            kbd: false,
+            mouse: false,
+            gamepad: true,
+            coalesce: false,
+            coalesce_window: Duration::from_millis(0),
+            coalesce_hard_limit: 0,
+        }
+    }
+
+    /// Configure the same device set, but with coalescing disabled.
+    /// Useful for ultra-low-latency control loops (e.g. fighting-game
+    /// style gamepad control).
+    pub const fn with_coalesce(mut self, coalesce: bool) -> Self {
+        self.coalesce = coalesce;
+        self
+    }
+
+    /// Configure the coalescing window used when `coalesce == true`.
+    /// A zero window is treated as fully direct mode (equivalent to
+    /// `with_coalesce(false)`), because it removes all timer-based batching
+    /// and keeps frame latency at minimum.
+    pub const fn with_coalesce_window(mut self, coalesce_window: Duration) -> Self {
+        self.coalesce_window = coalesce_window;
+        self
+    }
+
+    /// Configure the coalescing hard limit used when `coalesce == true`.
+    ///
+    /// Set to at least `1` for stable batching behavior.
+    pub const fn with_coalesce_hard_limit(mut self, coalesce_hard_limit: usize) -> Self {
+        self.coalesce_hard_limit = coalesce_hard_limit;
+        self
     }
 }
 
@@ -100,6 +154,8 @@ pub struct HidSession<T: TransportWrite> {
     kbd: Option<KeyboardHid>,
     mouse: Option<MouseHid>,
     gamepad: Option<GamepadHid>,
+    gamepad_slot: Option<usize>,
+    gamepad_hid_id: Option<u16>,
     closed: bool,
     /// Screen dimensions, used to populate `INJECT_TOUCH_EVENT` payloads.
     screen_w: u16,
@@ -117,25 +173,86 @@ const ACTION_DOWN: u8 = 0;
 const ACTION_UP: u8 = 1;
 const ACTION_MOVE: u8 = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GamepadFrameRaw {
+    pub buttons: u32,
+    pub left_x: i16,
+    pub left_y: i16,
+    pub right_x: i16,
+    pub right_y: i16,
+    pub left_trigger: i16,
+    pub right_trigger: i16,
+}
+
+/// Fixed-size gamepad payload used by every packed gamepad fast path.
+pub const GAMEPAD_FRAME_BYTES: usize = 15;
+
+impl GamepadFrameRaw {
+    pub const fn new(
+        buttons: u32,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Self {
+        Self {
+            buttons,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        }
+    }
+
+    /// Pack a gamepad frame into the 15-byte HID payload expected by
+    /// `UhidInput`.
+    #[inline]
+    pub fn pack(self) -> [u8; GAMEPAD_FRAME_BYTES] {
+        let mut data = [0u8; GAMEPAD_FRAME_BYTES];
+        let left_x = (self.left_x as i32 + 0x8000) as u16;
+        let left_y = (self.left_y as i32 + 0x8000) as u16;
+        let right_x = (self.right_x as i32 + 0x8000) as u16;
+        let right_y = (self.right_y as i32 + 0x8000) as u16;
+        let left_trigger = (self.left_trigger.max(0) as u16).min(0x7FFF);
+        let right_trigger = (self.right_trigger.max(0) as u16).min(0x7FFF);
+
+        data[0..2].copy_from_slice(&left_x.to_le_bytes());
+        data[2..4].copy_from_slice(&left_y.to_le_bytes());
+        data[4..6].copy_from_slice(&right_x.to_le_bytes());
+        data[6..8].copy_from_slice(&right_y.to_le_bytes());
+        data[8..10].copy_from_slice(&left_trigger.to_le_bytes());
+        data[10..12].copy_from_slice(&right_trigger.to_le_bytes());
+        data[12..14].copy_from_slice(&(self.buttons as u16).to_le_bytes());
+        data[14] = dpad_hat_value(self.buttons);
+        data
+    }
+}
+
 impl<T: TransportWrite> HidSession<T> {
     /// Open the requested devices on `transport`, sending one
     /// `UHID_CREATE` per enabled device. If any `UHID_CREATE` fails,
     /// every already-opened device is `UHID_DESTROY`d and the original
     /// error is returned.
     pub fn open(transport: T, req: OpenRequest) -> Result<Self> {
-        let transport = if req.coalesce {
-            CoalescingWriter::new(transport)
+        let transport = if req.coalesce && !req.coalesce_window.is_zero() {
+            let hard_limit = req.coalesce_hard_limit.max(1);
+            CoalescingWriter::with_limits(transport, req.coalesce_window, hard_limit)
         } else {
-            // Bypass coalescing: same CoalescingWriter type, but with
-            // a tiny window + large hard limit so the message goes
-            // out on the very next push.
-            CoalescingWriter::with_limits(transport, Duration::from_micros(1), usize::MAX)
+            // No batching; each non-critical message is flushed as soon
+            // as it is pushed.
+            CoalescingWriter::direct(transport)
         };
         let mut s = HidSession {
             transport,
             kbd: None,
             mouse: None,
             gamepad: None,
+            gamepad_slot: None,
+            gamepad_hid_id: None,
             closed: false,
             screen_w: 1080,
             screen_h: 1920,
@@ -155,14 +272,16 @@ impl<T: TransportWrite> HidSession<T> {
         if req.gamepad {
             let mut g = GamepadHid::new();
             // Allocate the first slot (id 3 = HID_ID_GAMEPAD_FIRST).
-            // `GamepadHid::open` returns the assigned hid_id; we use the
-            // public `create_message` helper to build the CREATE payload
-            // with the correct id.
-            let (hid_id, _msg) =
+            // `GamepadHid::open` already returns a fully formed `UhidCreate`
+            // payload (including the descriptor copy), reuse it directly.
+            let (hid_id, create) =
                 g.open(HID_ID_GAMEPAD_FIRST as u32, Some("Microsoft X-Box 360 Pad"))?;
-            let create = GamepadHid::create_message(hid_id, Some("Microsoft X-Box 360 Pad"));
+            let slot_idx = GamepadHid::slot_from_hid_id(hid_id)
+                .ok_or(Error::SessionLifecycle("invalid gamepad id"))?;
             s.send(&create)?;
             s.gamepad = Some(g);
+            s.gamepad_slot = Some(slot_idx);
+            s.gamepad_hid_id = Some(hid_id as u16);
         }
         Ok(s)
     }
@@ -258,24 +377,330 @@ impl<T: TransportWrite> HidSession<T> {
 
     /// Set a single gamepad stick/trigger axis to `value` in `[-1.0, 1.0]`
     /// (triggers are clamped to `[0, 1]`). Writes one `UHID_INPUT`.
+    #[inline]
     pub fn set_stick(&mut self, axis: GamepadAxis, value: f32) -> Result<()> {
+        let raw = (value.clamp(-1.0, 1.0) * 32767.0) as i16;
+        self.set_stick_raw(axis, raw)
+    }
+
+    /// Set a gamepad stick/trigger axis from a raw scrcpy axis value.
+    /// Useful for high-frequency callers that already have an i16 control
+    /// value and want to skip the `f32 -> i16` conversion in `set_stick`.
+    #[inline]
+    pub fn set_stick_raw(&mut self, axis: GamepadAxis, raw: i16) -> Result<()> {
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        let msg = gp.axis_event_slot_idx_raw(slot_idx, axis, raw);
+        if let Some((hid_id, payload)) = msg {
+            self.transport.push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn gamepad_with_cached_slot(&mut self) -> Result<(usize, &mut GamepadHid)> {
+        if self.closed {
+            return Err(Error::SessionLifecycle("session closed"));
+        }
+        let slot_idx = self
+            .gamepad_slot
+            .ok_or(Error::SessionLifecycle("gamepad not open"))?;
         let gp = self
             .gamepad
             .as_mut()
             .ok_or(Error::SessionLifecycle("gamepad not open"))?;
-        let raw = (value.clamp(-1.0, 1.0) * 32767.0) as i16;
-        let msg = gp.axis_event(HID_ID_GAMEPAD_FIRST as u32, axis, raw)?;
-        self.send(&msg)
+        Ok((slot_idx, gp))
+    }
+
+    #[inline]
+    fn gamepad_hid_id(&self) -> Result<u16> {
+        if self.closed {
+            return Err(Error::SessionLifecycle("session closed"));
+        }
+        self.gamepad_hid_id
+            .ok_or(Error::SessionLifecycle("gamepad not open"))
+    }
+
+    /// Replace all gamepad buttons from a single bitframe.
+    ///
+    /// This path is faster for AI-style frame loops than emitting one
+    /// per-button event.
+    #[inline]
+    pub fn set_buttons(&mut self, buttons: u32) -> Result<()> {
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if let Some((hid_id, payload)) = gp.buttons_event_slot_idx_raw(slot_idx, buttons) {
+            self.transport.push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
+    }
+
+    /// Replace all gamepad state fields in a single report (buttons +
+    /// left/right stick + left/right trigger).
+    ///
+    /// This is the lowest-latency path for full-frame gamepad updates
+    /// (one command + one UHID_INPUT at most).
+    #[inline]
+    pub fn set_frame_raw(
+        &mut self,
+        buttons: u32,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Result<()> {
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if let Some((hid_id, payload)) = gp.full_state_event_slot_idx_raw(
+            slot_idx,
+            buttons,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        ) {
+            self.transport
+                .push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
+    }
+
+    /// Fastest full-frame path from normalized fields (no state diffing).
+    ///
+    /// This is intended for high-frequency loops where the caller already
+    /// owns the current gamepad state and does not need dedupe inside
+    /// the library.
+    #[inline]
+    pub fn set_frame_raw_unchecked(
+        &mut self,
+        buttons: u32,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Result<()> {
+        let frame = GamepadFrameRaw {
+            buttons,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        };
+        let hid_id = self.gamepad_hid_id()?;
+        self.transport.push_gamepad_input_fields(hid_id, &frame)?;
+        Ok(())
+    }
+
+    /// Fastest full-frame path from a pre-built frame struct (no state
+    /// diffing).
+    #[inline]
+    pub fn set_frame_raw_unchecked_frame(&mut self, frame: GamepadFrameRaw) -> Result<()> {
+        let hid_id = self.gamepad_hid_id()?;
+        self.transport.push_gamepad_input_fields(hid_id, &frame)?;
+        Ok(())
+    }
+
+    /// Fast path for already-packed gamepad frames (15-byte HID payload).
+    ///
+    /// This bypasses `GamepadHid` state diffing and writes the payload as-is.
+    /// Use this only when the caller already keeps equivalent input state in
+    /// its own loop and intentionally wants every provided frame pushed.
+    #[inline]
+    pub fn set_frame_raw_packed(&mut self, payload: &[u8; GAMEPAD_FRAME_BYTES]) -> Result<()> {
+        let hid_id = self.gamepad_hid_id()?;
+        self.transport.push_gamepad_input(hid_id, payload)?;
+        Ok(())
+    }
+
+    /// Replace multiple full gamepad frames in sequence. This method
+    /// does a single slot lookup and sends each changed frame only
+    /// if it differs from the last in-memory state.
+    #[inline]
+    pub fn set_frame_raw_batch(&mut self, frames: &[GamepadFrameRaw]) -> Result<usize> {
+        if frames.is_empty() {
+            return Ok(0);
+        }
+        if frames.len() == 1 {
+            let frame = frames[0];
+            let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+            if let Some((hid_id, payload)) = gp.full_state_event_slot_idx_raw(
+                slot_idx,
+                frame.buttons,
+                frame.left_x,
+                frame.left_y,
+                frame.right_x,
+                frame.right_y,
+                frame.left_trigger,
+                frame.right_trigger,
+            ) {
+                self.transport.push_gamepad_input(hid_id, &payload)?;
+                return Ok(1);
+            }
+            return Ok(0);
+        }
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        let mut sent = 0usize;
+        let mut batch = [[0u8; GAMEPAD_FRAME_BYTES]; DIRECT_GAMEPAD_BATCH_FRAMES];
+        let mut batch_len = 0usize;
+        let mut batch_id = 0u16;
+        let mut have_batch_id = false;
+
+        for frame in frames {
+            if let Some((hid_id, payload)) = gp.full_state_event_slot_idx_raw(
+                slot_idx,
+                frame.buttons,
+                frame.left_x,
+                frame.left_y,
+                frame.right_x,
+                frame.right_y,
+                frame.left_trigger,
+                frame.right_trigger,
+            ) {
+                if !have_batch_id {
+                    batch_id = hid_id;
+                    have_batch_id = true;
+                }
+                batch[batch_len] = payload;
+                batch_len += 1;
+                sent += 1;
+
+                if batch_len == DIRECT_GAMEPAD_BATCH_FRAMES {
+                    self.transport.push_gamepad_input_batch(batch_id, &batch)?;
+                    batch_len = 0;
+                }
+            }
+        }
+
+        if batch_len > 0 && have_batch_id {
+            self.transport
+                .push_gamepad_input_batch(batch_id, &batch[..batch_len])?;
+        }
+        Ok(sent)
+    }
+
+    /// Replace multiple full frames in sequence without any state dedupe.
+    ///
+    /// Use this when your control loop already owns a complete frame
+    /// stream and wants every frame pushed (including duplicates).
+    #[inline]
+    pub fn set_frame_raw_batch_unchecked(
+        &mut self,
+        frames: &[GamepadFrameRaw],
+    ) -> Result<usize> {
+        if frames.is_empty() {
+            return Ok(0);
+        }
+        if frames.len() == 1 {
+            let frame = frames[0];
+            self.set_frame_raw_unchecked(
+                frame.buttons,
+                frame.left_x,
+                frame.left_y,
+                frame.right_x,
+                frame.right_y,
+                frame.left_trigger,
+                frame.right_trigger,
+            )?;
+            return Ok(1);
+        }
+        let hid_id = self.gamepad_hid_id()?;
+        self.transport
+            .push_gamepad_input_batch_from_fields(hid_id, frames)?;
+        Ok(frames.len())
+    }
+
+    /// Fast path for multiple already-packed 15-byte gamepad frames.
+    ///
+    /// Bypasses state diffing inside [`GamepadHid`] and writes each
+    /// payload directly. This is intentionally explicit and is ideal when
+    /// your loop already emits normalized HID report bytes.
+    #[inline]
+    pub fn set_frame_raw_packed_batch(&mut self, frames: &[[u8; GAMEPAD_FRAME_BYTES]]) -> Result<usize> {
+        if frames.is_empty() {
+            return Ok(0);
+        }
+        if frames.len() == 1 {
+            self.set_frame_raw_packed(&frames[0])?;
+            return Ok(1);
+        }
+        let hid_id = self.gamepad_hid_id()?;
+        self.transport.push_gamepad_input_batch(hid_id, frames)?;
+        Ok(frames.len())
+    }
+
+    /// Set both left-stick axes in one report (one `UHID_INPUT`), useful
+    /// when stick vectors are produced at render-rate.
+    #[inline]
+    pub fn set_left_stick_raw(&mut self, x: i16, y: i16) -> Result<()> {
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if let Some((hid_id, payload)) = gp.left_stick_raw_slot_idx_raw(slot_idx, x, y) {
+            self.transport.push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
+    }
+
+    /// Set both right-stick axes in one report (one `UHID_INPUT`).
+    #[inline]
+    pub fn set_right_stick_raw(&mut self, x: i16, y: i16) -> Result<()> {
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if let Some((hid_id, payload)) = gp.right_stick_raw_slot_idx_raw(slot_idx, x, y) {
+            self.transport.push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
+    }
+
+    /// Set both triggers in one report (one `UHID_INPUT`).
+    #[inline]
+    pub fn set_triggers_raw(&mut self, left: i16, right: i16) -> Result<()> {
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if let Some((hid_id, payload)) = gp.triggers_raw_slot_idx_raw(slot_idx, left, right) {
+            self.transport.push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
+    }
+
+    /// Set both sticks and triggers in one report (one `UHID_INPUT`) when
+    /// you already have a full sampled frame.
+    #[inline]
+    pub fn set_sticks_raw(
+        &mut self,
+        left_x: i16,
+        left_y: i16,
+        right_x: i16,
+        right_y: i16,
+        left_trigger: i16,
+        right_trigger: i16,
+    ) -> Result<()> {
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if let Some((hid_id, payload)) = gp.set_sticks_raw_slot_idx_raw(
+            slot_idx,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        ) {
+            self.transport
+                .push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
     }
 
     /// Set a single gamepad button to `pressed`. Writes one `UHID_INPUT`.
+    #[inline]
     pub fn set_button(&mut self, btn: GamepadButton, pressed: bool) -> Result<()> {
-        let gp = self
-            .gamepad
-            .as_mut()
-            .ok_or(Error::SessionLifecycle("gamepad not open"))?;
-        let msg = gp.button_event(HID_ID_GAMEPAD_FIRST as u32, btn, pressed)?;
-        self.send(&msg)
+        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if let Some((hid_id, payload)) = gp.button_event_slot_idx_raw(slot_idx, btn, pressed) {
+            self.transport
+                .push_gamepad_input(hid_id, &payload)?;
+        }
+        Ok(())
     }
 
     /// Access the underlying keyboard driver (for advanced key-level
@@ -297,10 +722,11 @@ impl<T: TransportWrite> HidSession<T> {
             .expect("gamepad requested but not opened")
     }
 
-    /// Send a control message over the owned transport. When the
-    /// session is in coalescing mode, the message is buffered and sent
-    /// on the next flush (1 ms window, hard limit, or explicit
-    /// [`Self::flush_now`] call). Critical messages bypass the buffer.
+    /// Send a control message over the owned transport. In coalescing
+    /// mode, non-critical messages are buffered and sent on the next
+    /// flush (1 ms window, hard limit, or explicit [`Self::flush_now`]
+    /// call). Critical messages bypass the buffer. When coalescing is
+    /// disabled, non-critical messages are flushed immediately.
     pub fn send(&mut self, msg: &ControlMessage) -> Result<()> {
         let _reason = self.transport.push(msg)?;
         Ok(())
@@ -323,6 +749,12 @@ impl<T: TransportWrite> HidSession<T> {
             self.transport.written(),
             self.transport.pending_bytes(),
         )
+    }
+
+    /// Total transport flushes performed by the underlying coalescing
+    /// writer. This is useful for high-frequency control tuning.
+    pub fn flushes(&self) -> u64 {
+        self.transport.flushes()
     }
 
     /// Consume the session, sending `UHID_DESTROY` for every device
@@ -569,12 +1001,19 @@ impl<T: TransportWrite> HidSession<T> {
             self.send(&msg)?;
         }
         if let Some(g) = self.gamepad.as_mut() {
-            // Close the default slot we opened (id = HID_ID_GAMEPAD_FIRST).
+            // Close the cached slot we opened (id = HID_ID_GAMEPAD_FIRST).
             // Ignore the "unknown gamepad" error in case the slot was
             // already torn down by a prior close.
-            if let Ok(msg) = g.close(HID_ID_GAMEPAD_FIRST as u32) {
+            if let Some(slot_idx) = self.gamepad_slot {
+                if let Ok(msg) = g.close_slot_idx(slot_idx) {
+                    self.send(&msg)?;
+                }
+            } else if let Ok(msg) = g.close(HID_ID_GAMEPAD_FIRST as u32) {
                 self.send(&msg)?;
             }
+            self.gamepad = None;
+            self.gamepad_slot = None;
+            self.gamepad_hid_id = None;
         }
         self.closed = true;
         Ok(())

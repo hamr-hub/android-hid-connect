@@ -118,7 +118,7 @@ impl MouseHid {
         data[1] = clamp_i8(xrel) as u8;
         data[2] = clamp_i8(yrel) as u8;
         // bytes 3-4 (wheel / AC pan) stay 0 for pure motion.
-        HidReport::new(HID_ID_MOUSE, data.to_vec())
+        HidReport::new(HID_ID_MOUSE, &data)
     }
 
     /// Convert a click event (down or up) into a 5-byte input report.
@@ -126,7 +126,7 @@ impl MouseHid {
         let mut data = [0u8; MOUSE_REPORT_SIZE];
         data[0] = buttons_byte(buttons_state);
         // Bytes 1-4 (motion + wheel) stay 0 for a pure click.
-        HidReport::new(HID_ID_MOUSE, data.to_vec())
+        HidReport::new(HID_ID_MOUSE, &data)
     }
 
     /// Convert a scroll event into a 5-byte input report, accumulating
@@ -145,7 +145,7 @@ impl MouseHid {
         data[0] = 0;
         data[3] = v as u8;
         data[4] = h as u8;
-        Some(HidReport::new(HID_ID_MOUSE, data.to_vec()))
+        Some(HidReport::new(HID_ID_MOUSE, &data))
     }
 
     /// Convenience: motion + click in a single shot. Equivalent to
@@ -165,7 +165,7 @@ impl MouseHid {
     pub fn to_input_message(&self, report: &HidReport) -> ControlMessage {
         assert_eq!(report.hid_id, HID_ID_MOUSE);
         let mut data = [0u8; HID_MAX_SIZE];
-        let n = report.data.len().min(HID_MAX_SIZE);
+        let n = (report.size as usize).min(HID_MAX_SIZE);
         data[..n].copy_from_slice(&report.data[..n]);
         ControlMessage::UhidInput(UhidInput {
             id: report.hid_id,
@@ -206,7 +206,10 @@ mod tests {
     fn motion_clamps_to_signed_byte() {
         let m = MouseHid::new();
         let r = m.generate_input_from_motion(5, -4, 0);
-        assert_eq!(r.data, vec![0x00, 0x05, 0xFC, 0x00, 0x00]); // -4 = 0xFC
+        assert_eq!(
+            &r.data[..MOUSE_REPORT_SIZE],
+            &[0x00, 0x05, 0xFC, 0x00, 0x00]
+        ); // -4 = 0xFC
     }
 
     #[test]
@@ -221,7 +224,7 @@ mod tests {
     fn click_carries_button_state() {
         let m = MouseHid::new();
         let r = m.generate_input_from_click(MouseButton::state(&[MouseButton::Left]));
-        assert_eq!(r.data, vec![0x01, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(&r.data[..MOUSE_REPORT_SIZE], &[0x01, 0x00, 0x00, 0x00, 0x00]);
     }
 
     #[test]

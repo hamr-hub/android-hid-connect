@@ -560,37 +560,13 @@ const DPAD_MASK: u32 = GamepadButton::DpadUp as u32
 ///     7 0 3
 ///     6 5 4
 /// ```
+#[inline]
 pub fn dpad_hat_value(buttons: u32) -> u8 {
-    let dpad = buttons & DPAD_MASK;
-    let up = dpad & GamepadButton::DpadUp as u32 != 0;
-    let down = dpad & GamepadButton::DpadDown as u32 != 0;
-    let left = dpad & GamepadButton::DpadLeft as u32 != 0;
-    let right = dpad & GamepadButton::DpadRight as u32 != 0;
-    if up && left {
-        return 8;
-    }
-    if up && right {
-        return 2;
-    }
-    if up {
-        return 1;
-    }
-    if down && left {
-        return 6;
-    }
-    if down && right {
-        return 4;
-    }
-    if down {
-        return 5;
-    }
-    if left {
-        return 7;
-    }
-    if right {
-        return 3;
-    }
-    0
+    const DPAD_HAT_LOOKUP: [u8; 16] = [
+        0, 1, 5, 0, 7, 8, 6, 0, //
+        3, 2, 4, 0, 0, 0, 0, 0,
+    ];
+    DPAD_HAT_LOOKUP[((buttons & DPAD_MASK) >> 16) as usize]
 }
 
 /// Validate a scancode and return its raw byte.

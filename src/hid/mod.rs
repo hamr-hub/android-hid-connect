@@ -12,18 +12,27 @@ pub mod mouse;
 
 use crate::control::message::ControlMessage;
 use crate::error::Result;
+use crate::types::HID_MAX_SIZE;
 
-/// Result of building an input report: a tuple of `(hid_id, data)` to feed
-/// into a UHID_INPUT control message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Result of building an input report: fixed-size bytes to feed into a
+/// UHID_INPUT control message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HidReport {
     pub hid_id: u16,
-    pub data: Vec<u8>,
+    pub size: u16,
+    pub data: [u8; HID_MAX_SIZE],
 }
 
 impl HidReport {
-    pub fn new(hid_id: u16, data: Vec<u8>) -> Self {
-        Self { hid_id, data }
+    pub fn new(hid_id: u16, data: &[u8]) -> Self {
+        let mut buf = [0u8; HID_MAX_SIZE];
+        let n = data.len().min(HID_MAX_SIZE);
+        buf[..n].copy_from_slice(&data[..n]);
+        Self {
+            hid_id,
+            size: n as u16,
+            data: buf,
+        }
     }
 }
 

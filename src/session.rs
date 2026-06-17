@@ -399,12 +399,11 @@ impl<T: TransportWrite> HidSession<T> {
         self.send(&msg)
     }
 
-    /// Borrow a multi-touch handle backed by this session. (Reserved —
-    /// not built in this minimal port; the [`Self::tap`] / [`Self::swipe`]
-    /// helpers handle single-touch use cases.)
-    #[doc(hidden)]
-    pub fn multitouch(&mut self) -> &mut Self {
-        self
+    /// Borrow a multi-touch handle backed by this session. Cannot
+    /// coexist with other `&mut self` borrows (keyboard / mouse /
+    /// gamepad) — the borrow checker enforces this at compile time.
+    pub fn multitouch(&mut self) -> crate::multitouch::MultitouchHandle<'_, T> {
+        crate::multitouch::MultitouchHandle::new(self)
     }
 
     fn touch_msg(

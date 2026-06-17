@@ -47,6 +47,7 @@
 #![deny(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
+pub mod ai;
 pub mod client;
 pub mod coalesce;
 pub mod control;

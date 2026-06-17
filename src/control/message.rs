@@ -68,6 +68,33 @@ pub enum ControlMsgType {
     CameraZoomIn = 19,
     CameraZoomOut = 20,
     ResizeDisplay = 21,
+    // === AI summary extensions (scrcpy-ai-server) ===
+    AiConfig = 22,
+    AiQuery = 23,
+    AiPause = 24,
+}
+
+/// Bit flags for [`ControlMessage::AiConfig`]. Mirrors the AI server's
+/// `AiProtocol` flag bits.
+pub const AI_FLAG_KEYFRAMES: u8 = 1 << 0;
+pub const AI_FLAG_FEATURES: u8 = 1 << 1;
+pub const AI_FLAG_MOTION: u8 = 1 << 2;
+pub const AI_FLAG_OBJECTS: u8 = 1 << 3;
+pub const AI_FLAG_TEXT: u8 = 1 << 4;
+
+/// Configure the AI summary pipeline on the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiConfig {
+    pub flags: u8,
+    pub sample_interval_ms: u16,
+    pub feature_dim: u16,
+}
+
+/// Query the server for the latest summary or stats. The server
+/// replies with a `DEVICE_MSG_TYPE_AI_STATS` envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiQuery {
+    pub since_timestamp_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,6 +219,10 @@ pub enum ControlMessage {
     ResetVideo,
     CameraZoomIn,
     CameraZoomOut,
+    // === AI summary extensions (scrcpy-ai-server) ===
+    AiConfig(AiConfig),
+    AiQuery(AiQuery),
+    AiPause,
 }
 
 impl ControlMessage {
@@ -220,6 +251,9 @@ impl ControlMessage {
             Self::CameraZoomIn => ControlMsgType::CameraZoomIn,
             Self::CameraZoomOut => ControlMsgType::CameraZoomOut,
             Self::ResizeDisplay(_) => ControlMsgType::ResizeDisplay,
+            Self::AiConfig(_) => ControlMsgType::AiConfig,
+            Self::AiQuery(_) => ControlMsgType::AiQuery,
+            Self::AiPause => ControlMsgType::AiPause,
         }
     }
 
@@ -268,6 +302,15 @@ impl ControlMessage {
                 buf.extend_from_slice(&r.width.to_be_bytes());
                 buf.extend_from_slice(&r.height.to_be_bytes());
             }
+            Self::AiConfig(c) => {
+                buf.push(c.flags);
+                buf.extend_from_slice(&c.sample_interval_ms.to_be_bytes());
+                buf.extend_from_slice(&c.feature_dim.to_be_bytes());
+            }
+            Self::AiQuery(q) => {
+                buf.extend_from_slice(&q.since_timestamp_ms.to_be_bytes());
+            }
+            Self::AiPause => { /* no payload */ }
             Self::ExpandNotificationPanel
             | Self::ExpandSettingsPanel
             | Self::CollapsePanels

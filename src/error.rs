@@ -45,6 +45,24 @@ pub enum Error {
     /// A `HidSession` lifecycle operation failed (open / close / Drop).
     #[error("session lifecycle error: {0}")]
     SessionLifecycle(&'static str),
+
+    /// A multitouch pointer id was outside `0..MAX_POINTERS`.
+    #[error("multitouch pointer id {0} is out of range (max {1})")]
+    PointerIdOutOfRange(u64, u64),
+
+    /// A multitouch pointer was referenced (move / up) without an
+    /// active down().
+    #[error("multitouch pointer {0} is not active")]
+    PointerNotActive(u64),
+
+    /// A multitouch pointer was down()'d twice without an intervening up().
+    #[error("multitouch pointer {0} is already down")]
+    PointerAlreadyDown(u64),
+
+    /// The dispatcher task is not running (e.g. it panicked or was
+    /// already joined).
+    #[error("hid dispatcher not running: {0}")]
+    DispatcherDown(&'static str),
 }
 
 /// Convenience alias for `Result<T, Error>`.

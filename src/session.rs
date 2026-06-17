@@ -382,6 +382,31 @@ impl<T: TransportWrite> HidSession<T> {
         Ok(())
     }
 
+    /// Low-level multi-touch inject. `pointer_id` should be in
+    /// `0..crate::multitouch::MAX_POINTERS` (validated by
+    /// [`crate::multitouch::MultitouchHandle`]; direct callers are
+    /// responsible for the check). `pressure` is clamped to `[0, 1]`
+    /// by the wire-format serializer.
+    pub fn inject_touch(
+        &mut self,
+        action: u8,
+        pointer_id: u64,
+        x: i32,
+        y: i32,
+        pressure: f32,
+    ) -> Result<()> {
+        let msg = self.touch_msg(action, pointer_id, x, y, pressure);
+        self.send(&msg)
+    }
+
+    /// Borrow a multi-touch handle backed by this session. Cannot
+    /// coexist with other `&mut self` borrows — the borrow checker
+    /// will reject `session.multitouch().down(...)` interleaved with
+    /// `session.keyboard().inject_key(...)` at compile time.
+    pub fn multitouch(&mut self) -> crate::multitouch::MultitouchHandle<'_, T> {
+        crate::multitouch::MultitouchHandle::new(self)
+    }
+
     fn touch_msg(
         &self,
         action: u8,

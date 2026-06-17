@@ -13,6 +13,7 @@ use android_hid_connect::transport::MockTransport;
 use android_hid_connect::types::HID_MAX_SIZE;
 use android_hid_connect::control::message::{ControlMessage, UhidInput};
 use android_hid_connect::KeyboardHid;
+use std::hint::black_box;
 
 fn bench_keyboard_input(c: &mut Criterion) {
     let mut kbd = KeyboardHid::new();
@@ -54,5 +55,38 @@ fn bench_send_to_mock(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_keyboard_input, bench_serialize, bench_send_to_mock);
+fn bench_coalesced_burst(c: &mut Criterion) {
+    // Burst of 100 UhidInput messages through a CoalescingWriter with
+    // a 1ms window and 4096-byte hard limit. Measures the average
+    // per-message cost when coalescing is on (should be much lower
+    // than `send_one into MockTransport` because there is only one
+    // write_all per window, not 100).
+    use android_hid_connect::coalesce::CoalescingWriter;
+    use std::time::Duration;
+    let mut data = [0u8; HID_MAX_SIZE];
+    data[2] = 0x04;
+    let msg = ControlMessage::UhidInput(UhidInput { id: 1, size: 8, data });
+    c.bench_function("coalesced 100-input burst", |b| {
+        b.iter(|| {
+            let mut w = CoalescingWriter::with_limits(
+                MockTransport::new(),
+                Duration::from_millis(1),
+                4096,
+            );
+            for _ in 0..100 {
+                w.push(black_box(&msg)).unwrap();
+            }
+            w.flush_now().unwrap();
+            std::hint::black_box(w);
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_keyboard_input,
+    bench_serialize,
+    bench_send_to_mock,
+    bench_coalesced_burst,
+);
 criterion_main!(benches);

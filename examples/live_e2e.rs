@@ -134,7 +134,9 @@ fn main() -> std::process::ExitCode {
     stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
     let mut stats = Stats::default();
 
-    // ---- 1. read dummy byte + device meta ----
+    // ---- 1. read dummy byte + raw 64-byte device meta ----
+    // The device-meta prefix is OUT-OF-BAND, NOT a device_msg frame —
+    // see scrcpy DesktopConnection.sendDeviceMeta.
     let mut dummy = [0u8; 1];
     match stream.read(&mut dummy) {
         Ok(n) if n == 1 => stats.ok(&format!("received dummy byte {:#x}", dummy[0])),
@@ -148,13 +150,16 @@ fn main() -> std::process::ExitCode {
         }
     }
 
-    match read_device_meta(&mut stream) {
-        Ok(name) => {
-            stats.ok(&format!("device meta: {name}"));
+    let mut device_meta = vec![0u8; 64];
+    match stream.read_exact(&mut device_meta) {
+        Ok(_) => {
+            let name_len = device_meta.iter().position(|&b| b == 0).unwrap_or(64);
+            let name = String::from_utf8_lossy(&device_meta[..name_len]).to_string();
+            stats.ok(&format!("device meta (raw 64B): {name}"));
         }
         Err(e) => {
             stats.fail += 1;
-            println!("  FAIL  device meta: {e}");
+            println!("  FAIL  device meta read: {e}");
         }
     }
 
@@ -200,6 +205,11 @@ fn main() -> std::process::ExitCode {
     println!("\n[3] UHID gamepad lifecycle (8 slots)");
     let mut gp = GamepadHid::new();
     let mut hid_ids = Vec::new();
+    // Open all 8 gamepads first (mirrors the scrcpy use case of 8
+    // physical controllers connected simultaneously); send CREATE +
+    // INPUT for each; then close them all at the end. Doing
+    // open+close in one iteration would re-use slot 0 each time
+    // (since close resets `gamepad_id` to GAMEPAD_ID_INVALID = 0).
     for slot in 1u32..=8 {
         let (hid_id, create) = gp.open(slot, Some("Pad")).unwrap();
         hid_ids.push(hid_id);
@@ -210,6 +220,8 @@ fn main() -> std::process::ExitCode {
         send_one(&mut stream, &stick).unwrap();
         let dpad = gp.button_event(slot, GamepadButton::DpadUp, true).unwrap();
         send_one(&mut stream, &dpad).unwrap();
+    }
+    for slot in 1u32..=8 {
         let destroy = gp.close(slot).unwrap();
         send_one(&mut stream, &destroy).unwrap();
     }

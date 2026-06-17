@@ -14,6 +14,7 @@
 
 use std::time::Duration;
 
+use crate::coalesce::CoalescingWriter;
 use crate::control::message::{
     ControlMessage, InjectTouchEvent,
 };
@@ -22,7 +23,6 @@ use crate::hid::gamepad::GamepadHid;
 use crate::hid::keyboard::KeyboardHid;
 use crate::hid::mouse::MouseHid;
 use crate::hid::HidDevice;
-use crate::transport;
 use crate::types::{
     GamepadAxis, GamepadButton, Modifiers, Scancode, HID_ID_GAMEPAD_FIRST,
 };
@@ -31,19 +31,36 @@ use crate::types::{
 /// available (no UHID device needed) — they ride on the same control
 /// socket. Use [`OpenRequest::all`], [`OpenRequest::none`], or any
 /// combination of `kbd`, `mouse`, `gamepad`.
+///
+/// `coalesce` (default `true`) wraps the transport in a
+/// [`CoalescingWriter`] so that bursty `UhidInput` traffic (e.g. 1 kHz
+/// gamepad stick jitter) is batched into a single `write_all` per
+/// 1 ms window. Set to `false` for power users who want every message
+/// to hit the wire immediately.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct OpenRequest {
     pub kbd: bool,
     pub mouse: bool,
     pub gamepad: bool,
+    pub coalesce: bool,
 }
 
 impl OpenRequest {
-    pub const fn none() -> Self { Self { kbd: false, mouse: false, gamepad: false } }
-    pub const fn all() -> Self  { Self { kbd: true,  mouse: true,  gamepad: true  } }
-    pub const fn kbd_only() -> Self   { Self { kbd: true,  mouse: false, gamepad: false } }
-    pub const fn mouse_only() -> Self { Self { kbd: false, mouse: true,  gamepad: false } }
-    pub const fn gamepad_only() -> Self { Self { kbd: false, mouse: false, gamepad: true  } }
+    pub const fn none() -> Self {
+        Self { kbd: false, mouse: false, gamepad: false, coalesce: true }
+    }
+    pub const fn all() -> Self {
+        Self { kbd: true,  mouse: true,  gamepad: true,  coalesce: true }
+    }
+    pub const fn kbd_only() -> Self {
+        Self { kbd: true,  mouse: false, gamepad: false, coalesce: true }
+    }
+    pub const fn mouse_only() -> Self {
+        Self { kbd: false, mouse: true,  gamepad: false, coalesce: true }
+    }
+    pub const fn gamepad_only() -> Self {
+        Self { kbd: false, mouse: false, gamepad: true,  coalesce: true }
+    }
 }
 
 /// Owned UHID session: opens kbd/mouse/gamepad together and tracks
@@ -51,9 +68,14 @@ impl OpenRequest {
 /// `std::net::TcpStream`, `Vec<u8>`, [`crate::transport::MockTransport`]).
 /// The session takes ownership and returns the transport from
 /// [`HidSession::close`].
+///
+/// When `OpenRequest::coalesce` is `true` (the default), the transport
+/// is wrapped in a [`CoalescingWriter`] that batches `UhidInput` writes
+/// within a 1 ms window. Critical messages (`UhidCreate` / `UhidDestroy`)
+/// bypass the buffer.
 #[derive(Debug)]
 pub struct HidSession<T: TransportWrite> {
-    transport: T,
+    transport: CoalescingWriter<T>,
     kbd: Option<KeyboardHid>,
     mouse: Option<MouseHid>,
     gamepad: Option<GamepadHid>,
@@ -80,6 +102,14 @@ impl<T: TransportWrite> HidSession<T> {
     /// every already-opened device is `UHID_DESTROY`d and the original
     /// error is returned.
     pub fn open(transport: T, req: OpenRequest) -> Result<Self> {
+        let transport = if req.coalesce {
+            CoalescingWriter::new(transport)
+        } else {
+            // Bypass coalescing: same CoalescingWriter type, but with
+            // a tiny window + large hard limit so the message goes
+            // out on the very next push.
+            CoalescingWriter::with_limits(transport, Duration::from_micros(1), usize::MAX)
+        };
         let mut s = HidSession {
             transport,
             kbd: None,
@@ -225,9 +255,28 @@ impl<T: TransportWrite> HidSession<T> {
         self.gamepad.as_mut().expect("gamepad requested but not opened")
     }
 
-    /// Send a control message over the owned transport.
+    /// Send a control message over the owned transport. When the
+    /// session is in coalescing mode, the message is buffered and sent
+    /// on the next flush (1 ms window, hard limit, or explicit
+    /// [`Self::flush_now`] call). Critical messages bypass the buffer.
     pub fn send(&mut self, msg: &ControlMessage) -> Result<()> {
-        transport::send_one(&mut self.transport, msg)
+        let _reason = self.transport.push(msg)?;
+        Ok(())
+    }
+
+    /// Force any buffered messages to the transport. Returns the
+    /// number of bytes flushed. Always call this before reading the
+    /// transport (e.g. in tests using `MockTransport`) to ensure no
+    /// bytes are still in the coalescing buffer.
+    pub fn flush_now(&mut self) -> Result<usize> {
+        self.transport.flush_now()
+    }
+
+    /// Statistics from the underlying coalescing writer: total
+    /// messages pushed, total bytes written, and pending bytes
+    /// currently buffered.
+    pub fn stats(&self) -> (u64, u64, usize) {
+        (self.transport.pushed(), self.transport.written(), self.transport.pending_bytes())
     }
 
     /// Consume the session, sending `UHID_DESTROY` for every device
@@ -244,10 +293,13 @@ impl<T: TransportWrite> HidSession<T> {
     pub fn into_inner(self) -> T {
         assert!(self.closed, "HidSession::into_inner called before close(); leak risk");
         // SAFETY: `closed == true` means `Drop` is a no-op. We move out
-        // the transport and `forget(self)` to disable the destructor.
-        let transport = unsafe { std::ptr::read(&self.transport) };
+        // the coalescing-wrapped transport and `forget(self)` to
+        // disable the destructor.
+        let cw = unsafe { std::ptr::read(&self.transport) };
         std::mem::forget(self);
-        transport
+        // The CoalescingWriter's Drop is a no-op because we just took
+        // ownership. Extract the inner transport.
+        cw.into_inner().expect("into_inner after close()")
     }
 
     /// `true` if the session is already closed (or close was called).

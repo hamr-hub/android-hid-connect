@@ -1,0 +1,24 @@
+[package]
+name = "android-hid-connect"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of scrcpy's UHID control protocol — drive Android via HID over scrcpy-server control socket"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/android-hid-connect"
+readme = "README.md"
+keywords = ["android", "scrcpy", "uhid", "hid", "automation"]
+categories = ["api-bindings", "hardware-support"]
+
+[lib]
+name = "android_hid_connect"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = "1"
+
+[dev-dependencies]
+bytes = "1"
+
+[features]
+default = []
+std = []

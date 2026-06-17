@@ -14,11 +14,11 @@ name = "android_hid_connect"
 path = "src/lib.rs"
 
 [dependencies]
-thiserror = "1"
+thiserror = "2"
 
 [dev-dependencies]
 bytes = "1"
-criterion = { version = "0.5", default-features = false }
+criterion = { version = "0.8", default-features = false }
 
 [[bench]]
 name = "uhid_throughput"

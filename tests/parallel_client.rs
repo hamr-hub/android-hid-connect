@@ -3,7 +3,7 @@
 
 use std::thread;
 
-use android_hid_connect::client::{HidCommand, HidClient};
+use android_hid_connect::client::{HidClient, HidCommand};
 use android_hid_connect::session::{HidSession, OpenRequest};
 use android_hid_connect::transport::MockTransport;
 use android_hid_connect::types::{GamepadAxis, HID_ID_GAMEPAD_FIRST};
@@ -11,7 +11,10 @@ use android_hid_connect::types::{GamepadAxis, HID_ID_GAMEPAD_FIRST};
 const TAG_UHID_INPUT: u8 = 13;
 const TAG_UHID_DESTROY: u8 = 14;
 
-fn open_with_client() -> (HidClient, android_hid_connect::client::HidDispatcher<MockTransport>) {
+fn open_with_client() -> (
+    HidClient,
+    android_hid_connect::client::HidDispatcher<MockTransport>,
+) {
     let s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
     s.into_client().unwrap()
 }
@@ -27,26 +30,42 @@ fn four_thread_stress() {
                 c.send(HidCommand::GamepadStick {
                     axis: GamepadAxis::LeftX,
                     value: ((t * 250 + i) as f32) / 1000.0 - 0.5,
-                }).unwrap();
+                })
+                .unwrap();
             }
         }));
     }
-    for h in handles { h.join().unwrap(); }
+    for h in handles {
+        h.join().unwrap();
+    }
     client.close();
     let t = dispatcher.join().unwrap();
     let bytes = t.into_bytes();
     let inputs = bytes.iter().filter(|b| **b == TAG_UHID_INPUT).count();
-    assert!(inputs >= 1000, "expected ≥ 1000 UhidInput frames, got {inputs}");
-    assert!(bytes.windows(3)
-        .any(|w| w == [TAG_UHID_DESTROY, 0x00, HID_ID_GAMEPAD_FIRST as u8]),
-        "expected DESTROY for gamepad");
+    assert!(
+        inputs >= 1000,
+        "expected ≥ 1000 UhidInput frames, got {inputs}"
+    );
+    assert!(
+        bytes
+            .windows(3)
+            .any(|w| w == [TAG_UHID_DESTROY, 0x00, HID_ID_GAMEPAD_FIRST as u8]),
+        "expected DESTROY for gamepad"
+    );
 }
 
 #[test]
 fn close_returns_transport() {
     let (client, dispatcher) = open_with_client();
-    client.send(HidCommand::MultitouchDown { id: 0, x: 100, y: 200, pressure: 1.0 }).unwrap();
-    client.send(HidCommand::MultitouchUp   { id: 0 }).unwrap();
+    client
+        .send(HidCommand::MultitouchDown {
+            id: 0,
+            x: 100,
+            y: 200,
+            pressure: 1.0,
+        })
+        .unwrap();
+    client.send(HidCommand::MultitouchUp { id: 0 }).unwrap();
     client.close();
     let t = dispatcher.join().unwrap();
     let bytes = t.into_bytes();
@@ -70,19 +89,25 @@ fn coalescing_under_parallel() {
                 c.send(HidCommand::GamepadStick {
                     axis: GamepadAxis::LeftX,
                     value: 0.0,
-                }).unwrap();
+                })
+                .unwrap();
             }
         }));
     }
-    for h in handles { h.join().unwrap(); }
+    for h in handles {
+        h.join().unwrap();
+    }
     client.close();
     let t = dispatcher.join().unwrap();
     let bytes = t.into_bytes();
     // Generous bound: 20000 raw + 5000 overhead for CREATE/DESTROY.
     // (The real win — 13.6x fewer syscalls — is visible in the
     // criterion bench, not in the byte count.)
-    assert!(bytes.len() < 25_000,
-        "expected ≤ 25000 bytes (1000 × 20B + overhead); got {}", bytes.len());
+    assert!(
+        bytes.len() < 25_000,
+        "expected ≤ 25000 bytes (1000 × 20B + overhead); got {}",
+        bytes.len()
+    );
 }
 
 #[test]

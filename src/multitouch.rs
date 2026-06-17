@@ -9,9 +9,9 @@ use crate::session::HidSession;
 /// Usage Tables' "Simultaneous Contacts" upper bound).
 pub const MAX_POINTERS: u64 = 10;
 
-pub const ACTION_DOWN:   u8 = 0;
-pub const ACTION_UP:     u8 = 1;
-pub const ACTION_MOVE:   u8 = 2;
+pub const ACTION_DOWN: u8 = 0;
+pub const ACTION_UP: u8 = 1;
+pub const ACTION_MOVE: u8 = 2;
 pub const ACTION_CANCEL: u8 = 3;
 
 #[derive(Debug)]
@@ -22,7 +22,10 @@ pub struct MultitouchHandle<'a, T: TransportWrite> {
 
 impl<'a, T: TransportWrite> MultitouchHandle<'a, T> {
     pub(crate) fn new(session: &'a mut HidSession<T>) -> Self {
-        Self { session, active: [false; MAX_POINTERS as usize] }
+        Self {
+            session,
+            active: [false; MAX_POINTERS as usize],
+        }
     }
 
     #[inline]
@@ -75,17 +78,23 @@ impl<'a, T: TransportWrite> MultitouchHandle<'a, T> {
 
     /// Two-pointer pinch. `p0` / `p1` are
     /// `(pointer_id, x_from, y_from, x_to, y_to)` 5-tuples.
-    pub fn pinch(&mut self, p0: (u64, i32, i32, i32, i32),
-                 p1: (u64, i32, i32, i32, i32),
-                 steps: u32) -> Result<()> {
+    pub fn pinch(
+        &mut self,
+        p0: (u64, i32, i32, i32, i32),
+        p1: (u64, i32, i32, i32, i32),
+        steps: u32,
+    ) -> Result<()> {
         let steps = steps.max(2);
         let (id0, x0_from, y0_from, x0_to, y0_to) = p0;
         let (id1, x1_from, y1_from, x1_to, y1_to) = p1;
         self.check_id(id0)?;
         self.check_id(id1)?;
         if !self.active[id0 as usize] || !self.active[id1 as usize] {
-            return Err(Error::PointerNotActive(
-                if !self.active[id0 as usize] { id0 } else { id1 }));
+            return Err(Error::PointerNotActive(if !self.active[id0 as usize] {
+                id0
+            } else {
+                id1
+            }));
         }
         for i in 1..=steps {
             let t = i as f32 / steps as f32;

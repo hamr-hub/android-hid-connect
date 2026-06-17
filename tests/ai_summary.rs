@@ -13,15 +13,25 @@ use android_hid_connect::ai::{
     TextRegion, FLAG_KEYFRAME, FLAG_MOTION, FLAG_OBJECTS, FLAG_SCENE_CHANGE,
 };
 use android_hid_connect::control::message::{
-    ControlMessage, AI_FLAG_FEATURES, AI_FLAG_KEYFRAMES, AI_FLAG_MOTION, AI_FLAG_OBJECTS,
-    AiConfig, AiQuery,
+    AiConfig, AiQuery, ControlMessage, AI_FLAG_FEATURES, AI_FLAG_KEYFRAMES, AI_FLAG_MOTION,
+    AI_FLAG_OBJECTS,
 };
 
-fn be_u16(v: u16) -> [u8; 2] { v.to_be_bytes() }
-fn be_u32(v: u32) -> [u8; 4] { v.to_be_bytes() }
-fn be_u64(v: u64) -> [u8; 8] { v.to_be_bytes() }
-fn be_i16(v: i16) -> [u8; 2] { v.to_be_bytes() }
-fn be_f32(v: f32) -> [u8; 4] { v.to_be_bytes() }
+fn be_u16(v: u16) -> [u8; 2] {
+    v.to_be_bytes()
+}
+fn be_u32(v: u32) -> [u8; 4] {
+    v.to_be_bytes()
+}
+fn be_u64(v: u64) -> [u8; 8] {
+    v.to_be_bytes()
+}
+fn be_i16(v: i16) -> [u8; 2] {
+    v.to_be_bytes()
+}
+fn be_f32(v: f32) -> [u8; 4] {
+    v.to_be_bytes()
+}
 
 #[test]
 fn ai_config_serializes_to_tag_22() {
@@ -41,7 +51,9 @@ fn ai_config_serializes_to_tag_22() {
 
 #[test]
 fn ai_query_serializes_to_tag_23() {
-    let msg = ControlMessage::AiQuery(AiQuery { since_timestamp_ms: 1_700_000_000_000 });
+    let msg = ControlMessage::AiQuery(AiQuery {
+        since_timestamp_ms: 1_700_000_000_000,
+    });
     let v = msg.serialize().unwrap();
     assert_eq!(v.len(), 9);
     assert_eq!(v[0], 23);
@@ -70,19 +82,28 @@ fn frame_summary_round_trip_full() {
         b.extend(be_f32(0.9));
         // 2 motion vectors
         b.extend(be_u16(2));
-        b.extend(be_u16(100)); b.extend(be_u16(200));
-        b.extend(be_i16(5)); b.extend(be_i16(-3));
-        b.extend(be_u16(300)); b.extend(be_u16(400));
-        b.extend(be_i16(0)); b.extend(be_i16(7));
+        b.extend(be_u16(100));
+        b.extend(be_u16(200));
+        b.extend(be_i16(5));
+        b.extend(be_i16(-3));
+        b.extend(be_u16(300));
+        b.extend(be_u16(400));
+        b.extend(be_i16(0));
+        b.extend(be_i16(7));
         // 1 object box
         b.extend(be_u16(1));
-        b.extend(be_u16(50)); b.extend(be_u16(60));
-        b.extend(be_u16(200)); b.extend(be_u16(40));
-        b.push(0); b.push(200);
+        b.extend(be_u16(50));
+        b.extend(be_u16(60));
+        b.extend(be_u16(200));
+        b.extend(be_u16(40));
+        b.push(0);
+        b.push(200);
         // 1 text region
         b.push(1);
-        b.extend(be_u16(10)); b.extend(be_u16(20));
-        b.extend(be_u16(30)); b.extend(be_u16(40));
+        b.extend(be_u16(10));
+        b.extend(be_u16(20));
+        b.extend(be_u16(30));
+        b.extend(be_u16(40));
         b
     };
     let s = FrameSummary::parse(&payload).unwrap();
@@ -92,21 +113,48 @@ fn frame_summary_round_trip_full() {
     assert!(s.is_scene_change());
     assert_eq!(s.features.len(), 3);
     assert!((s.features[1] - 0.5).abs() < 1e-6);
-    assert_eq!(s.motion, vec![
-        MotionVector { x: 100, y: 200, dx: 5, dy: -3 },
-        MotionVector { x: 300, y: 400, dx: 0, dy: 7 },
-    ]);
-    assert_eq!(s.objects, vec![
-        ObjectBox { x: 50, y: 60, w: 200, h: 40, class_id: 0, confidence: 200 }
-    ]);
-    assert_eq!(s.text_regions, vec![
-        TextRegion { x: 10, y: 20, w: 30, h: 40 }
-    ]);
+    assert_eq!(
+        s.motion,
+        vec![
+            MotionVector {
+                x: 100,
+                y: 200,
+                dx: 5,
+                dy: -3
+            },
+            MotionVector {
+                x: 300,
+                y: 400,
+                dx: 0,
+                dy: 7
+            },
+        ]
+    );
+    assert_eq!(
+        s.objects,
+        vec![ObjectBox {
+            x: 50,
+            y: 60,
+            w: 200,
+            h: 40,
+            class_id: 0,
+            confidence: 200
+        }]
+    );
+    assert_eq!(
+        s.text_regions,
+        vec![TextRegion {
+            x: 10,
+            y: 20,
+            w: 30,
+            h: 40
+        }]
+    );
 }
 
 #[test]
 fn envelope_decode_frame() {
-    let mut envelope = vec![3u8];                  // type = FRAME_SUMMARY
+    let mut envelope = vec![3u8]; // type = FRAME_SUMMARY
     let payload = {
         let mut b = Vec::new();
         b.extend(be_u64(1));
@@ -135,7 +183,7 @@ fn envelope_decode_frame() {
 
 #[test]
 fn envelope_decode_stats() {
-    let mut envelope = vec![4u8];                  // type = AI_STATS
+    let mut envelope = vec![4u8]; // type = AI_STATS
     let payload = {
         let mut b = Vec::new();
         b.extend(be_u64(60_000));
@@ -186,8 +234,10 @@ fn frame_summary_describe_for_llm() {
     b.push(FLAG_KEYFRAME | FLAG_MOTION);
     b.extend(be_u16(0));
     b.extend(be_u16(1));
-    b.extend(be_u16(100)); b.extend(be_u16(100));
-    b.extend(be_i16(5)); b.extend(be_i16(-5));
+    b.extend(be_u16(100));
+    b.extend(be_u16(100));
+    b.extend(be_i16(5));
+    b.extend(be_i16(-5));
     b.extend(be_u16(0));
     b.push(0);
     let s = FrameSummary::parse(&b).unwrap();

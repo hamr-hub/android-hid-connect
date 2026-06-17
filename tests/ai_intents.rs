@@ -17,40 +17,53 @@ fn find_msg_with_tag(bytes: &[u8], tag: u8) -> Option<&[u8]> {
             let len = match tag {
                 12 => {
                     // UHID_CREATE: tag + id(2) + vid(2) + pid(2) + name_len(1) + name + rd_size(2) + rd
-                    if i + 8 > bytes.len() { break; }
+                    if i + 8 > bytes.len() {
+                        break;
+                    }
                     let name_len = bytes[i + 7] as usize;
-                    if i + 8 + name_len + 2 > bytes.len() { break; }
-                    let rd_size = u16::from_be_bytes([
-                        bytes[i + 8 + name_len], bytes[i + 8 + name_len + 1],
-                    ]) as usize;
+                    if i + 8 + name_len + 2 > bytes.len() {
+                        break;
+                    }
+                    let rd_size =
+                        u16::from_be_bytes([bytes[i + 8 + name_len], bytes[i + 8 + name_len + 1]])
+                            as usize;
                     8 + name_len + 2 + rd_size
                 }
                 13 => {
                     // UHID_INPUT: tag + id(2) + size(2) + data
-                    if i + 5 > bytes.len() { break; }
+                    if i + 5 > bytes.len() {
+                        break;
+                    }
                     let size = u16::from_be_bytes([bytes[i + 3], bytes[i + 4]]) as usize;
                     5 + size
                 }
-                14 => 3,   // UHID_DESTROY: tag + id(2)
-                TAG_TOUCH => 32,  // INJECT_TOUCH_EVENT
+                14 => 3,         // UHID_DESTROY: tag + id(2)
+                TAG_TOUCH => 32, // INJECT_TOUCH_EVENT
                 9 => {
                     // SET_CLIPBOARD: tag + sequence(8) + paste(1) + text_len(4) + text
-                    if i + 14 > bytes.len() { break; }
+                    if i + 14 > bytes.len() {
+                        break;
+                    }
                     let text_len = u32::from_be_bytes([
-                        bytes[i + 10], bytes[i + 11], bytes[i + 12], bytes[i + 13],
+                        bytes[i + 10],
+                        bytes[i + 11],
+                        bytes[i + 12],
+                        bytes[i + 13],
                     ]) as usize;
                     14 + text_len
                 }
                 16 => {
                     // START_APP: tag + name_len(1) + name
-                    if i + 2 > bytes.len() { break; }
+                    if i + 2 > bytes.len() {
+                        break;
+                    }
                     let name_len = bytes[i + 1] as usize;
                     2 + name_len
                 }
                 // Tag-only (1-byte) messages
                 4 | 5 | 6 | 7 | 8 | 11 | 15 | 17 | 18 | 19 | 20 => 1,
-                10 => 2,  // SET_DISPLAY_POWER: tag + on(1)
-                21 => 5,  // RESIZE_DISPLAY: tag + width(2) + height(2)
+                10 => 2, // SET_DISPLAY_POWER: tag + on(1)
+                21 => 5, // RESIZE_DISPLAY: tag + width(2) + height(2)
                 _ => break,
             };
             if i + len <= bytes.len() {
@@ -67,7 +80,8 @@ fn count_touch_events(bytes: &[u8]) -> usize {
     let mut count = 0;
     let mut i = 0;
     while i + TOUCH_PAYLOAD_SIZE <= bytes.len() {
-        if bytes[i] == TAG_TOUCH && (bytes[i + 1] <= 3)
+        if bytes[i] == TAG_TOUCH
+            && (bytes[i + 1] <= 3)
             && bytes[i + 2..i + 9].iter().all(|b| *b == 0)
             && bytes[i + 9] < 10
         {
@@ -95,7 +109,9 @@ fn run_one<F: FnOnce(&mut HidSession<MockTransport>)>(f: F) -> Vec<u8> {
 
 #[test]
 fn set_screen_power_emits_set_display_power() {
-    let bytes = run_one(|s| { s.set_screen_power(false).unwrap(); });
+    let bytes = run_one(|s| {
+        s.set_screen_power(false).unwrap();
+    });
     // Tag 10 (SetDisplayPower), payload = 1 byte (on as u8)
     assert_eq!(bytes[0], 10);
     assert_eq!(bytes[1], 0); // off
@@ -122,8 +138,10 @@ fn press_keys_emit_inject_keycode() {
     let mut i = 0;
     while i + 14 <= bytes.len() {
         if bytes[i] == 0 {
-            let kc = u32::from_be_bytes([bytes[i+2], bytes[i+3], bytes[i+4], bytes[i+5]]);
-            if keycodes.contains(&kc) { found += 1; }
+            let kc = u32::from_be_bytes([bytes[i + 2], bytes[i + 3], bytes[i + 4], bytes[i + 5]]);
+            if keycodes.contains(&kc) {
+                found += 1;
+            }
             i += 14;
         } else {
             i += 1;
@@ -144,8 +162,10 @@ fn volume_keys_use_correct_keycodes() {
     let mut i = 0;
     while i + 14 <= bytes.len() {
         if bytes[i] == 0 {
-            let kc = u32::from_be_bytes([bytes[i+2], bytes[i+3], bytes[i+4], bytes[i+5]]);
-            if keycodes.contains(&kc) { found += 1; }
+            let kc = u32::from_be_bytes([bytes[i + 2], bytes[i + 3], bytes[i + 4], bytes[i + 5]]);
+            if keycodes.contains(&kc) {
+                found += 1;
+            }
             i += 14;
         } else {
             i += 1;
@@ -225,7 +245,9 @@ fn set_clipboard_emits_set_clipboard() {
 
 #[test]
 fn get_clipboard_emits_get_clipboard() {
-    let bytes = run_one(|s| { s.get_clipboard().unwrap(); });
+    let bytes = run_one(|s| {
+        s.get_clipboard().unwrap();
+    });
     assert_eq!(bytes[0], 8); // tag 8 (GetClipboard)
     assert_eq!(bytes[1], 0); // copy_key = 0
 }
@@ -247,13 +269,20 @@ fn long_press_blocks_for_dur() {
     let mut s = setup();
     s.set_screen_size(1080, 2400);
     let start = std::time::Instant::now();
-    s.long_press(100, 200, std::time::Duration::from_millis(50)).unwrap();
+    s.long_press(100, 200, std::time::Duration::from_millis(50))
+        .unwrap();
     let elapsed = start.elapsed();
-    assert!(elapsed >= std::time::Duration::from_millis(50),
-        "long_press should block for dur, elapsed {elapsed:?}");
+    assert!(
+        elapsed >= std::time::Duration::from_millis(50),
+        "long_press should block for dur, elapsed {elapsed:?}"
+    );
     s.close().unwrap();
     let bytes = s.into_inner().into_bytes();
-    assert_eq!(count_touch_events(&bytes), 2, "expected 2 touch events (down + up)");
+    assert_eq!(
+        count_touch_events(&bytes),
+        2,
+        "expected 2 touch events (down + up)"
+    );
 }
 
 #[test]
@@ -264,13 +293,17 @@ fn three_finger_screenshot_emits_36_touches() {
     s.close().unwrap();
     let bytes = s.into_inner().into_bytes();
     // 3 down + 3*10 move + 3 up = 36 touch events
-    assert_eq!(count_touch_events(&bytes), 36,
-        "expected 36 touch events (3 down + 30 move + 3 up)");
+    assert_eq!(
+        count_touch_events(&bytes),
+        36,
+        "expected 36 touch events (3 down + 30 move + 3 up)"
+    );
     // 3 distinct pointer_ids
     let mut ids = std::collections::HashSet::new();
     let mut i = 0;
     while i + TOUCH_PAYLOAD_SIZE <= bytes.len() {
-        if bytes[i] == TAG_TOUCH && (bytes[i + 1] <= 3)
+        if bytes[i] == TAG_TOUCH
+            && (bytes[i + 1] <= 3)
             && bytes[i + 2..i + 9].iter().all(|b| *b == 0)
             && bytes[i + 9] < 10
         {
@@ -296,7 +329,9 @@ fn close_after_intents_emits_destroys() {
     // 3 UHID_DESTROY (kbd + mouse + gamepad) at end.
     let mut destroys = 0;
     for w in bytes.windows(3) {
-        if w[0] == TAG_UHID_DESTROY { destroys += 1; }
+        if w[0] == TAG_UHID_DESTROY {
+            destroys += 1;
+        }
     }
     assert_eq!(destroys, 3, "expected 3 DESTROY frames (kbd+mouse+gamepad)");
 }

@@ -371,20 +371,30 @@ impl<T: TransportWrite> HidSession<T> {
 
     /// Inject a raw keycode (Android `KeyEvent.KEYCODE_*`).
     /// `keycode` and `metastate` follow `InjectKeycode`.
-    pub fn inject_keycode(&mut self, action: u8, keycode: u32,
-                          repeat: u32, metastate: u32) -> Result<()> {
+    pub fn inject_keycode(
+        &mut self,
+        action: u8,
+        keycode: u32,
+        repeat: u32,
+        metastate: u32,
+    ) -> Result<()> {
         self.send(&ControlMessage::InjectKeycode(
-            crate::control::message::InjectKeycode { action, keycode, repeat, metastate },
+            crate::control::message::InjectKeycode {
+                action,
+                keycode,
+                repeat,
+                metastate,
+            },
         ))
     }
 
     /// Press the Home key.
     pub fn press_home(&mut self) -> Result<()> {
-        self.inject_keycode(0, 3, 0, 0)  // KEYCODE_HOME = 3
+        self.inject_keycode(0, 3, 0, 0) // KEYCODE_HOME = 3
     }
     /// Press the Back key.
     pub fn press_back(&mut self) -> Result<()> {
-        self.inject_keycode(0, 4, 0, 0)  // KEYCODE_BACK = 4
+        self.inject_keycode(0, 4, 0, 0) // KEYCODE_BACK = 4
     }
     /// Open the recents / app-switcher.
     pub fn open_recents(&mut self) -> Result<()> {
@@ -423,7 +433,10 @@ impl<T: TransportWrite> HidSession<T> {
     /// Resize the virtual display (developer mode).
     pub fn resize_display(&mut self, w: u16, h: u16) -> Result<()> {
         self.send(&ControlMessage::ResizeDisplay(
-            crate::control::message::ResizeDisplay { width: w, height: h },
+            crate::control::message::ResizeDisplay {
+                width: w,
+                height: h,
+            },
         ))
     }
     /// Toggle the camera torch.
@@ -451,14 +464,18 @@ impl<T: TransportWrite> HidSession<T> {
     /// Launch an app by package name.
     pub fn launch_app(&mut self, name: &str) -> Result<()> {
         self.send(&ControlMessage::StartApp(
-            crate::control::message::StartApp { name: name.to_string() },
+            crate::control::message::StartApp {
+                name: name.to_string(),
+            },
         ))
     }
     /// Write text to the device clipboard.
     pub fn set_clipboard(&mut self, text: &str, paste: bool) -> Result<()> {
         self.send(&ControlMessage::SetClipboard(
             crate::control::message::SetClipboard {
-                sequence: 0, paste, text: text.to_string(),
+                sequence: 0,
+                paste,
+                text: text.to_string(),
             },
         ))
     }
@@ -493,12 +510,19 @@ impl<T: TransportWrite> HidSession<T> {
         let w = self.screen_w as i32;
         let h = self.screen_h as i32;
         for id in 0u64..3 {
-            self.touch_msg_pub(crate::multitouch::ACTION_DOWN, id, w / 4 * (id as i32 + 1), h / 4, 1.0)?;
+            self.touch_msg_pub(
+                crate::multitouch::ACTION_DOWN,
+                id,
+                w / 4 * (id as i32 + 1),
+                h / 4,
+                1.0,
+            )?;
         }
         for step in 1..=10 {
             for id in 0u64..3 {
                 self.touch_msg_pub(
-                    crate::multitouch::ACTION_MOVE, id,
+                    crate::multitouch::ACTION_MOVE,
+                    id,
                     w / 4 * (id as i32 + 1),
                     h / 4 + (h / 2 * step / 10),
                     1.0,
@@ -506,15 +530,27 @@ impl<T: TransportWrite> HidSession<T> {
             }
         }
         for id in 0u64..3 {
-            self.touch_msg_pub(crate::multitouch::ACTION_UP, id, w / 4 * (id as i32 + 1), h * 3 / 4, 0.0)?;
+            self.touch_msg_pub(
+                crate::multitouch::ACTION_UP,
+                id,
+                w / 4 * (id as i32 + 1),
+                h * 3 / 4,
+                0.0,
+            )?;
         }
         Ok(())
     }
 
     // === end AI intent methods ===
 
-    fn touch_msg_pub(&mut self, action: u8, pointer_id: u64,
-                     x: i32, y: i32, pressure: f32) -> Result<()> {
+    fn touch_msg_pub(
+        &mut self,
+        action: u8,
+        pointer_id: u64,
+        x: i32,
+        y: i32,
+        pressure: f32,
+    ) -> Result<()> {
         self.inject_touch(action, pointer_id, x, y, pressure)
     }
 

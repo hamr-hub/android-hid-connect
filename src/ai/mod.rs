@@ -103,10 +103,18 @@ impl FrameSummary {
             "frame#{} ts={}ms {}x{} flags=0x{:02x}",
             self.frame_seq, self.timestamp_ms, self.width, self.height, self.flags
         );
-        if self.is_keyframe() { s.push_str(" KEYFRAME"); }
-        if self.is_scene_change() { s.push_str(" SCENE_CHANGE"); }
-        if self.is_moving() { s.push_str(&format!(" MOTION({})", self.motion.len())); }
-        if self.has_objects() { s.push_str(&format!(" OBJECTS({})", self.objects.len())); }
+        if self.is_keyframe() {
+            s.push_str(" KEYFRAME");
+        }
+        if self.is_scene_change() {
+            s.push_str(" SCENE_CHANGE");
+        }
+        if self.is_moving() {
+            s.push_str(&format!(" MOTION({})", self.motion.len()));
+        }
+        if self.has_objects() {
+            s.push_str(&format!(" OBJECTS({})", self.objects.len()));
+        }
         if !self.text_regions.is_empty() {
             s.push_str(&format!(" TEXT({})", self.text_regions.len()));
         }
@@ -169,11 +177,20 @@ impl FrameSummary {
         let mut sink = [0u8; 64];
         while cur.position() < payload.len() as u64 {
             let n = Read::read(&mut cur, &mut sink).unwrap_or(0);
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
         }
         Ok(FrameSummary {
-            timestamp_ms, frame_seq, width, height, flags,
-            features, motion, objects, text_regions,
+            timestamp_ms,
+            frame_seq,
+            width,
+            height,
+            flags,
+            features,
+            motion,
+            objects,
+            text_regions,
         })
     }
 }
@@ -259,9 +276,7 @@ fn read_f32_be(cur: &mut std::io::Cursor<&[u8]>) -> std::io::Result<f32> {
 /// is the full device-msg envelope: type(1) + length(4 BE) + payload.
 /// Returns `Ok(None)` for unknown / unsupported types (so the caller
 /// can skip forward).
-pub fn read_device_envelope<R: std::io::Read>(
-    r: &mut R,
-) -> Result<Option<DeviceEnvelope>> {
+pub fn read_device_envelope<R: std::io::Read>(r: &mut R) -> Result<Option<DeviceEnvelope>> {
     let mut header = [0u8; 5];
     if let Err(e) = std::io::Read::read_exact(r, &mut header) {
         if e.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -272,8 +287,7 @@ pub fn read_device_envelope<R: std::io::Read>(
     let ty = header[0];
     let len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
     let mut payload = vec![0u8; len];
-    std::io::Read::read_exact(r, &mut payload)
-        .map_err(|e| Error::Transport(format!("{e}")))?;
+    std::io::Read::read_exact(r, &mut payload).map_err(|e| Error::Transport(format!("{e}")))?;
     match ty {
         TYPE_FRAME_SUMMARY => Ok(Some(DeviceEnvelope::Frame(FrameSummary::parse(&payload)?))),
         TYPE_AI_STATS => Ok(Some(DeviceEnvelope::Stats(AiStats::parse(&payload)?))),
@@ -292,11 +306,21 @@ pub enum DeviceEnvelope {
 mod tests {
     use super::*;
 
-    fn write_be_u16(v: u16) -> Vec<u8> { v.to_be_bytes().to_vec() }
-    fn write_be_u32(v: u32) -> Vec<u8> { v.to_be_bytes().to_vec() }
-    fn write_be_u64(v: u64) -> Vec<u8> { v.to_be_bytes().to_vec() }
-    fn write_be_i16(v: i16) -> Vec<u8> { v.to_be_bytes().to_vec() }
-    fn write_be_f32(v: f32) -> Vec<u8> { v.to_be_bytes().to_vec() }
+    fn write_be_u16(v: u16) -> Vec<u8> {
+        v.to_be_bytes().to_vec()
+    }
+    fn write_be_u32(v: u32) -> Vec<u8> {
+        v.to_be_bytes().to_vec()
+    }
+    fn write_be_u64(v: u64) -> Vec<u8> {
+        v.to_be_bytes().to_vec()
+    }
+    fn write_be_i16(v: i16) -> Vec<u8> {
+        v.to_be_bytes().to_vec()
+    }
+    fn write_be_f32(v: f32) -> Vec<u8> {
+        v.to_be_bytes().to_vec()
+    }
 
     fn build_frame_summary() -> Vec<u8> {
         let mut b = Vec::new();
@@ -312,15 +336,22 @@ mod tests {
         b.extend(write_be_f32(0.4));
         // 2 motion vectors
         b.extend(write_be_u16(2));
-        b.extend(write_be_u16(100)); b.extend(write_be_u16(200));
-        b.extend(write_be_i16(5)); b.extend(write_be_i16(-3));
-        b.extend(write_be_u16(300)); b.extend(write_be_u16(400));
-        b.extend(write_be_i16(0)); b.extend(write_be_i16(7));
+        b.extend(write_be_u16(100));
+        b.extend(write_be_u16(200));
+        b.extend(write_be_i16(5));
+        b.extend(write_be_i16(-3));
+        b.extend(write_be_u16(300));
+        b.extend(write_be_u16(400));
+        b.extend(write_be_i16(0));
+        b.extend(write_be_i16(7));
         // 1 object box
         b.extend(write_be_u16(1));
-        b.extend(write_be_u16(50)); b.extend(write_be_u16(60));
-        b.extend(write_be_u16(200)); b.extend(write_be_u16(40));
-        b.push(0); b.push(200);
+        b.extend(write_be_u16(50));
+        b.extend(write_be_u16(60));
+        b.extend(write_be_u16(200));
+        b.extend(write_be_u16(40));
+        b.push(0);
+        b.push(200);
         // 0 text regions
         b.push(0);
         b
@@ -339,11 +370,27 @@ mod tests {
         assert!(s.has_objects());
         assert_eq!(s.features, vec![0.1, 0.2, 0.3, 0.4]);
         assert_eq!(s.motion.len(), 2);
-        assert_eq!(s.motion[0], MotionVector { x: 100, y: 200, dx: 5, dy: -3 });
+        assert_eq!(
+            s.motion[0],
+            MotionVector {
+                x: 100,
+                y: 200,
+                dx: 5,
+                dy: -3
+            }
+        );
         assert_eq!(s.objects.len(), 1);
-        assert_eq!(s.objects[0], ObjectBox {
-            x: 50, y: 60, w: 200, h: 40, class_id: 0, confidence: 200,
-        });
+        assert_eq!(
+            s.objects[0],
+            ObjectBox {
+                x: 50,
+                y: 60,
+                w: 200,
+                h: 40,
+                class_id: 0,
+                confidence: 200,
+            }
+        );
     }
 
     #[test]
@@ -354,10 +401,10 @@ mod tests {
         b.extend(write_be_u16(100));
         b.extend(write_be_u16(100));
         b.push(FLAG_KEYFRAME);
-        b.extend(write_be_u16(0));     // feature_dim
-        b.extend(write_be_u16(0));     // num_motion
-        b.extend(write_be_u16(0));     // num_objects
-        b.push(0);                     // num_text
+        b.extend(write_be_u16(0)); // feature_dim
+        b.extend(write_be_u16(0)); // num_motion
+        b.extend(write_be_u16(0)); // num_objects
+        b.push(0); // num_text
         let s = FrameSummary::parse(&b).unwrap();
         assert!(s.is_keyframe());
         assert!(!s.is_moving());
@@ -368,13 +415,13 @@ mod tests {
     #[test]
     fn parse_stats() {
         let mut b = Vec::new();
-        b.extend(write_be_u64(60_000));   // uptime
-        b.extend(write_be_u32(300));      // sampled
-        b.extend(write_be_u32(12));       // skipped
-        b.extend(write_be_u32(50));       // yolo
-        b.extend(write_be_u64(24_000));   // bytes
-        b.extend(write_be_f32(4.5));      // avg_latency
-        b.extend(write_be_f32(5.2));      // current_fps
+        b.extend(write_be_u64(60_000)); // uptime
+        b.extend(write_be_u32(300)); // sampled
+        b.extend(write_be_u32(12)); // skipped
+        b.extend(write_be_u32(50)); // yolo
+        b.extend(write_be_u64(24_000)); // bytes
+        b.extend(write_be_f32(4.5)); // avg_latency
+        b.extend(write_be_f32(5.2)); // current_fps
         let st = AiStats::parse(&b).unwrap();
         assert_eq!(st.uptime_ms, 60_000);
         assert_eq!(st.frames_sampled, 300);

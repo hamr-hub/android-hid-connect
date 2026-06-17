@@ -49,19 +49,51 @@ pub const DEFAULT_CHANNEL_BOUND: usize = 1024;
 #[derive(Debug, Clone)]
 pub enum HidCommand {
     TypeText(String),
-    Key { scancode: u8, pressed: bool, mods: Modifiers },
-    MultitouchDown { id: u64, x: i32, y: i32, pressure: f32 },
-    MultitouchMove { id: u64, x: i32, y: i32, pressure: f32 },
-    MultitouchUp { id: u64 },
-    GamepadButton { btn: GamepadButton, pressed: bool },
-    GamepadStick { axis: GamepadAxis, value: f32 },
-    SetScreenPower { on: bool },
-    LaunchApp { name: String },
-    SetClipboard { text: String, paste: bool },
+    Key {
+        scancode: u8,
+        pressed: bool,
+        mods: Modifiers,
+    },
+    MultitouchDown {
+        id: u64,
+        x: i32,
+        y: i32,
+        pressure: f32,
+    },
+    MultitouchMove {
+        id: u64,
+        x: i32,
+        y: i32,
+        pressure: f32,
+    },
+    MultitouchUp {
+        id: u64,
+    },
+    GamepadButton {
+        btn: GamepadButton,
+        pressed: bool,
+    },
+    GamepadStick {
+        axis: GamepadAxis,
+        value: f32,
+    },
+    SetScreenPower {
+        on: bool,
+    },
+    LaunchApp {
+        name: String,
+    },
+    SetClipboard {
+        text: String,
+        paste: bool,
+    },
     /// Phase 1 stub: sends the GET_CLIPBOARD request and replies
     /// with an empty string. True server-reply forwarding is a
     /// follow-up run.
-    GetClipboard { reply: std::sync::mpsc::Sender<String>, copy_key: u8 },
+    GetClipboard {
+        reply: std::sync::mpsc::Sender<String>,
+        copy_key: u8,
+    },
     Flush,
     Close,
 }
@@ -88,7 +120,9 @@ impl<T: TransportWrite + Send + 'static> std::fmt::Debug for HidDispatcher<T> {
 
 impl<T: TransportWrite + Send + 'static> HidDispatcher<T> {
     pub fn join(mut self) -> Result<T> {
-        let j = self.join.take()
+        let j = self
+            .join
+            .take()
             .ok_or(Error::DispatcherDown("already joined"))?;
         match j.join() {
             Ok(r) => r,
@@ -105,10 +139,7 @@ impl<T: TransportWrite + Send + 'static> HidSession<T> {
         self.into_client_with_bound(DEFAULT_CHANNEL_BOUND)
     }
 
-    pub fn into_client_with_bound(
-        self,
-        bound: usize,
-    ) -> Result<(HidClient, HidDispatcher<T>)> {
+    pub fn into_client_with_bound(self, bound: usize) -> Result<(HidClient, HidDispatcher<T>)> {
         let (tx, rx) = mpsc::sync_channel::<HidCommand>(bound);
         let join = thread::Builder::new()
             .name("android-hid-dispatcher".into())
@@ -127,7 +158,9 @@ impl HidClient {
     }
 
     pub fn send(&self, cmd: HidCommand) -> Result<()> {
-        self.tx.send(cmd).map_err(|_| Error::DispatcherDown("channel disconnected"))
+        self.tx
+            .send(cmd)
+            .map_err(|_| Error::DispatcherDown("channel disconnected"))
     }
 
     pub fn close(&self) {
@@ -152,8 +185,14 @@ fn dispatcher_loop<T: TransportWrite + Send>(
                 let _ = session.close();
                 return Ok(session.into_inner());
             }
-            HidCommand::TypeText(s) => { let _ = session.type_text(&s); }
-            HidCommand::Key { scancode, pressed, mods } => {
+            HidCommand::TypeText(s) => {
+                let _ = session.type_text(&s);
+            }
+            HidCommand::Key {
+                scancode,
+                pressed,
+                mods,
+            } => {
                 let _ = session.key(scancode, pressed, mods);
             }
             HidCommand::MultitouchDown { id, x, y, pressure } => {
@@ -179,14 +218,18 @@ fn dispatcher_loop<T: TransportWrite + Send>(
             }
             HidCommand::SetClipboard { text, paste } => {
                 let _ = session.send(&ControlMessage::SetClipboard(SetClipboard {
-                    sequence: 0, paste, text,
+                    sequence: 0,
+                    paste,
+                    text,
                 }));
             }
             HidCommand::GetClipboard { reply, copy_key } => {
                 let _ = session.send(&ControlMessage::GetClipboard(GetClipboard { copy_key }));
                 let _ = reply.send(String::new());
             }
-            HidCommand::Flush => { let _ = session.flush_now(); }
+            HidCommand::Flush => {
+                let _ = session.flush_now();
+            }
         }
     }
 }

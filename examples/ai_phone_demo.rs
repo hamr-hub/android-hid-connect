@@ -47,7 +47,10 @@ impl Step {
         label: &'static str,
         run: impl Fn(&mut HidSession<std::net::TcpStream>) -> Result<u64> + 'static,
     ) -> Self {
-        Self { label, run: Box::new(run) }
+        Self {
+            label,
+            run: Box::new(run),
+        }
     }
 }
 
@@ -145,7 +148,11 @@ fn main() -> Result<()> {
         match (step.run)(&mut s) {
             Ok(bytes) => {
                 s.flush_now()?;
-                println!("  PASS  {:54}  +{bytes:>5}B  {:?}", step.label, t0.elapsed());
+                println!(
+                    "  PASS  {:54}  +{bytes:>5}B  {:?}",
+                    step.label,
+                    t0.elapsed()
+                );
             }
             Err(e) => {
                 eprintln!("  FAIL  {}: {e}", step.label);
@@ -170,8 +177,7 @@ fn main() -> Result<()> {
     println!("\n== Phase 2: parallel HidClient (MockTransport) ==");
     let mock = MockTransport::new();
     let s2 = HidSession::open(mock, OpenRequest::gamepad_only())?;
-    let (client, dispatcher): (HidClient, HidDispatcher<_>) =
-        s2.into_client_with_bound(256)?;
+    let (client, dispatcher): (HidClient, HidDispatcher<_>) = s2.into_client_with_bound(256)?;
 
     let c = client.clone();
     let producer = std::thread::spawn(move || {
@@ -181,7 +187,9 @@ fn main() -> Result<()> {
             if c.send(HidCommand::GamepadStick {
                 axis: GamepadAxis::LeftX,
                 value: v,
-            }).is_err() {
+            })
+            .is_err()
+            {
                 break;
             }
             sent += 1;
@@ -196,9 +204,12 @@ fn main() -> Result<()> {
     let consumer = std::thread::spawn(move || {
         let mut ok = 0;
         for _ in 0..50 {
-            if c2.send(HidCommand::LaunchApp {
-                name: "com.android.settings".to_string(),
-            }).is_ok() {
+            if c2
+                .send(HidCommand::LaunchApp {
+                    name: "com.android.settings".to_string(),
+                })
+                .is_ok()
+            {
                 ok += 1;
             }
         }

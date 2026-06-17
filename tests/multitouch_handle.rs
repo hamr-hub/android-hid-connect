@@ -8,7 +8,6 @@ use android_hid_connect::transport::MockTransport;
 
 const TAG_TOUCH: u8 = 2;
 const TAG_UHID_DESTROY: u8 = 14;
-const TOUCH_PAYLOAD_SIZE: usize = 31;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct TouchFrame {
@@ -22,36 +21,58 @@ fn parse_touch_frames(bytes: &[u8]) -> Vec<TouchFrame> {
     while i < bytes.len() {
         match bytes[i] {
             12 => {
-                if i + 8 > bytes.len() { break; }
+                if i + 8 > bytes.len() {
+                    break;
+                }
                 let name_len = bytes[i + 7] as usize;
-                if i + 8 + name_len + 2 > bytes.len() { break; }
-                let rd_size = u16::from_be_bytes([
-                    bytes[i + 8 + name_len],
-                    bytes[i + 8 + name_len + 1],
-                ]) as usize;
+                if i + 8 + name_len + 2 > bytes.len() {
+                    break;
+                }
+                let rd_size =
+                    u16::from_be_bytes([bytes[i + 8 + name_len], bytes[i + 8 + name_len + 1]])
+                        as usize;
                 let total = 8 + name_len + 2 + rd_size;
-                if i + total > bytes.len() { break; }
+                if i + total > bytes.len() {
+                    break;
+                }
                 i += total;
             }
             13 => {
-                if i + 5 > bytes.len() { break; }
+                if i + 5 > bytes.len() {
+                    break;
+                }
                 let size = u16::from_be_bytes([bytes[i + 3], bytes[i + 4]]) as usize;
                 let total = 5 + size;
-                if i + total > bytes.len() { break; }
+                if i + total > bytes.len() {
+                    break;
+                }
                 i += total;
             }
             TAG_UHID_DESTROY => {
-                if i + 3 > bytes.len() { break; }
+                if i + 3 > bytes.len() {
+                    break;
+                }
                 i += 3;
             }
             TAG_TOUCH => {
-                if i + 32 > bytes.len() { break; }
+                if i + 32 > bytes.len() {
+                    break;
+                }
                 let action = bytes[i + 1];
                 let pid = u64::from_be_bytes([
-                    bytes[i+2], bytes[i+3], bytes[i+4], bytes[i+5],
-                    bytes[i+6], bytes[i+7], bytes[i+8], bytes[i+9],
+                    bytes[i + 2],
+                    bytes[i + 3],
+                    bytes[i + 4],
+                    bytes[i + 5],
+                    bytes[i + 6],
+                    bytes[i + 7],
+                    bytes[i + 8],
+                    bytes[i + 9],
                 ]);
-                out.push(TouchFrame { action, pointer_id: pid });
+                out.push(TouchFrame {
+                    action,
+                    pointer_id: pid,
+                });
                 i += 32;
             }
             _ => break,
@@ -72,8 +93,8 @@ fn down_up_emits_correct_pointer_id() {
     s.close().unwrap();
     let frames = parse_touch_frames(&s.into_inner().into_bytes());
     assert_eq!(frames.len(), 2);
-    assert_eq!(frames[0].action, 0);  // DOWN
-    assert_eq!(frames[1].action, 1);  // UP
+    assert_eq!(frames[0].action, 0); // DOWN
+    assert_eq!(frames[1].action, 1); // UP
     assert!(frames.iter().all(|f| f.pointer_id == 3));
 }
 
@@ -97,7 +118,11 @@ fn ten_point_lifecycle() {
     }
     s.close().unwrap();
     let frames = parse_touch_frames(&s.into_inner().into_bytes());
-    assert_eq!(frames.len(), 30, "expected 30 events (10 down + 10 move + 10 up)");
+    assert_eq!(
+        frames.len(),
+        30,
+        "expected 30 events (10 down + 10 move + 10 up)"
+    );
     for id in 0..MAX_POINTERS {
         let n = frames.iter().filter(|f| f.pointer_id == id).count();
         assert_eq!(n, 3, "pointer {id} should appear 3 times");
@@ -112,11 +137,8 @@ fn pinch_emits_alternating_pointers() {
         let mut m = s.multitouch();
         m.down(0, 100, 100, 1.0).unwrap();
         m.down(1, 200, 100, 1.0).unwrap();
-        m.pinch(
-            (0, 100, 100, 300, 100),
-            (1, 200, 100, 0,   100),
-            5,
-        ).unwrap();
+        m.pinch((0, 100, 100, 300, 100), (1, 200, 100, 0, 100), 5)
+            .unwrap();
         m.up(0).unwrap();
         m.up(1).unwrap();
     }

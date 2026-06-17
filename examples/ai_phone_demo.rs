@@ -202,16 +202,17 @@ fn main() -> Result<()> {
                 right_trigger: 0,
             });
             if batch.len() == BATCH {
-                if batch_client.send_frame_batch(batch).is_err() {
+                let drained = std::mem::take(&mut batch);
+                if batch_client.send_frame_batch(drained).is_err() {
                     break;
                 }
                 sent += BATCH;
-                batch = Vec::with_capacity(BATCH);
             }
         }
         if !batch.is_empty() {
             let sent_now = batch.len();
-            if batch_client.send_frame_batch(batch).is_ok() {
+            let drained = std::mem::take(&mut batch);
+            if batch_client.send_frame_batch(drained).is_ok() {
                 sent += sent_now;
             }
         }

@@ -405,7 +405,7 @@ fn packed_gamepad_frame_batcher_try_push_backpressure() {
                     }
                     Err(err) => match err {
                         android_hid_connect::Error::SessionLifecycle(_) => {
-                            dropped.fetch_add(1, Ordering::Relaxed)
+                            dropped.fetch_add(1, Ordering::Relaxed);
                         }
                         _ => panic!("unexpected error from try_push: {err}"),
                     },
@@ -535,7 +535,7 @@ fn try_send_frame_batch_unchecked_backpressure() {
                     }
                     Err(err) => match err {
                         android_hid_connect::Error::SessionLifecycle(_) => {
-                            dropped.fetch_add(1, Ordering::Relaxed)
+                            dropped.fetch_add(1, Ordering::Relaxed);
                         }
                         _ => panic!("unexpected error from try_send_frame_batch_unchecked: {err}"),
                     },

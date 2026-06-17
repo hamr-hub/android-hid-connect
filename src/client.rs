@@ -1042,9 +1042,9 @@ impl<'a> GamepadFrameBatcher<'a> {
         }
         let frames = std::mem::replace(&mut self.frames, Vec::new());
         let result = if self.dedupe {
-            self.client.send_frame_batch(frames)
+            self.client.send_frame_batch(frames.clone())
         } else {
-            self.client.send_frame_batch_unchecked(frames)
+            self.client.send_frame_batch_unchecked(frames.clone())
         };
         if let Err(err) = result {
             self.frames = frames;
@@ -1108,9 +1108,9 @@ impl<'a> GamepadFrameBatcher<'a> {
         }
         let frames = std::mem::replace(&mut self.frames, Vec::new());
         let result = if self.dedupe {
-            self.client.try_send_frame_batch(frames)
+            self.client.try_send_frame_batch(frames.clone())
         } else {
-            self.client.try_send_frame_batch_unchecked(frames)
+            self.client.try_send_frame_batch_unchecked(frames.clone())
         };
         if let Err(err) = result {
             self.frames = frames;
@@ -1140,7 +1140,12 @@ impl<'a> GamepadFrameBatcher<'a> {
 
 impl<'a> Drop for GamepadFrameBatcher<'a> {
     fn drop(&mut self) {
-        let _ = self.flush();
+        // Non-blocking flush: dropping the batcher must not deadlock if
+        // the dispatcher's channel is already full (which would happen
+        // when the producer thread holds the batcher longer than the
+        // dispatcher can drain, or in tests where there is no
+        // dispatcher at all).
+        let _ = self.try_flush();
     }
 }
 
@@ -1378,7 +1383,7 @@ impl<'a> PackedGamepadFrameBatcher<'a> {
             return result;
         }
         let frames = std::mem::replace(&mut self.frames, Vec::new());
-        let result = self.client.send_frame_packed_batch(frames);
+        let result = self.client.send_frame_packed_batch(frames.clone());
         if let Err(err) = result {
             self.frames = frames;
             return Err(err);
@@ -1427,7 +1432,7 @@ impl<'a> PackedGamepadFrameBatcher<'a> {
             return result;
         }
         let frames = std::mem::replace(&mut self.frames, Vec::new());
-        let result = self.client.try_send_frame_packed_batch(frames);
+        let result = self.client.try_send_frame_packed_batch(frames.clone());
         if let Err(err) = result {
             self.frames = frames;
             return Err(err);
@@ -1458,7 +1463,10 @@ impl<'a> PackedGamepadFrameBatcher<'a> {
 
 impl<'a> Drop for PackedGamepadFrameBatcher<'a> {
     fn drop(&mut self) {
-        let _ = self.flush();
+        // Non-blocking flush: see the matching comment on
+        // `GamepadFrameBatcher::drop`. Blocking on Drop would
+        // deadlock if the dispatcher channel is full at unwind time.
+        let _ = self.try_flush();
     }
 }
 
@@ -1685,6 +1693,50 @@ mod tests {
         assert!(matches!(overflow_err, Error::SessionLifecycle(_)));
     }
 
+    /// Regression for the `cargo test --lib` hang observed on
+    /// `iter-skill/uhid-optimize-e2e` (2026-06-17): the previous
+    /// `Drop` impl called the **blocking** `flush()`. When the
+    /// dispatcher's bounded channel was already full at unwind time,
+    /// `tx.send(cmd)` blocked forever because the same thread still
+    /// needed to drop the sender afterwards. The fix is to call
+    /// `try_flush` instead. This test drops the batcher with a full
+    /// channel and asserts the drop completes without hanging.
+    #[test]
+    fn batcher_drop_is_non_blocking_when_channel_full() {
+        let (tx, _rx) = sync_channel(1);
+        let client = HidClient { tx };
+
+        // GamepadFrameBatcher: fill the channel so Drop's flush sees a
+        // full mpsc and would block if it used the blocking path.
+        {
+            let mut batcher = GamepadFrameBatcher::dedupe(&client, 2);
+            // push 1 + push 2 → flush puts one item in the channel.
+            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
+            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
+            // push 3 + push 4 → batcher is full again, channel is full.
+            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
+            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_err());
+            // Drop here MUST NOT block. If it does, the test framework
+            // will hang the suite. The test process will be killed by
+            // the CI timeout and we will see the regression.
+        }
+
+        // PackedGamepadFrameBatcher: same scenario, packed variant.
+        // The channel is still full from the previous block, so
+        // try_flush will return Err — we just want to ensure Drop
+        // completes without hanging.
+        {
+            let mut batcher = PackedGamepadFrameBatcher::new(&client, 2);
+            let frame = [1u8; GAMEPAD_FRAME_BYTES];
+            // push 1: batch holds the frame, no flush, Ok.
+            assert!(batcher.try_push(frame).is_ok());
+            // push 2: batch is full → try_flush → channel full → Err,
+            // batcher restored to full. We don't care about the Err
+            // here, only that Drop on the full batcher doesn't hang.
+            let _ = batcher.try_push(frame);
+        }
+    }
+
     #[test]
     fn send_frame_batch_len_one_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
@@ -1838,11 +1890,10 @@ mod tests {
             other => panic!("expected GamepadButton command, got {other:?}"),
         }
 
-        client.send_buttons(GamepadButton::South as u32).unwrap();
+        let expected_buttons = GamepadButton::South as u32;
+        client.send_buttons(expected_buttons).unwrap();
         match rx.try_recv().unwrap() {
-            HidCommand::GamepadButtons {
-                buttons: GamepadButton::South as u32,
-            } => {}
+            HidCommand::GamepadButtons { buttons: expected_buttons } => {}
             other => panic!("expected GamepadButtons command, got {other:?}"),
         }
 

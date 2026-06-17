@@ -17,7 +17,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::control::message::{ControlMessage, ControlMsgType, UhidInput};
+use crate::control::message::{ControlMessage, ControlMsgType};
 use crate::error::{Error, Result};
 use crate::error::TransportWrite;
 use crate::session::GamepadFrameRaw;
@@ -308,6 +308,12 @@ impl<T: TransportWrite> CoalescingWriter<T> {
         Ok(FlushReason::Pending)
     }
 
+    /// Encode a single UHID_INPUT message bypassing the coalescing
+    /// accumulator. Reserved for callers that need to flush exactly
+    /// one event outside the normal batching window (e.g. when
+    /// dropping the writer with one frame still pending). Not used
+    /// by the production hot path today — kept for future use.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn push_uhid_input(&mut self, id: u16, size: u16, data: &[u8]) -> Result<FlushReason> {
         let size = size as usize;
@@ -533,9 +539,9 @@ impl<T: TransportWrite> CoalescingWriter<T> {
                 });
             }
             _ => {
-                let serialized = self.push_message_to_scratch(msg)?;
+                let serialized = self.push_message_to_scratch(msg)?.to_vec();
                 let serialized_len = serialized.len();
-                self.transport.write_all(serialized)?;
+                self.transport.write_all(&serialized)?;
                 self.transport.flush()?;
                 self.written += serialized_len as u64;
                 self.flushes += 1;
@@ -563,8 +569,8 @@ impl<T: TransportWrite> CoalescingWriter<T> {
             // invariant: a critical (UHID_CREATE / UHID_DESTROY) must
             // never be dropped.
             self.flush_now()?;
-            let serialized = self.push_message_to_scratch(msg)?;
-            self.transport.write_all(serialized)?;
+            let serialized = self.push_message_to_scratch(msg)?.to_vec();
+            self.transport.write_all(&serialized)?;
             self.transport.flush()?;
             self.written += serialized.len() as u64;
             self.flushes += 1;
@@ -576,8 +582,8 @@ impl<T: TransportWrite> CoalescingWriter<T> {
                 Self::push_uhid_input_to_buf(&mut self.pending, input.id, input.size as usize, &input.data)?;
             }
             _ => {
-                let serialized = self.push_message_to_scratch(msg)?;
-                self.pending.extend_from_slice(serialized);
+                let serialized = self.push_message_to_scratch(msg)?.to_vec();
+                self.pending.extend_from_slice(&serialized);
             }
         }
         if self.pending.len() >= self.hard_limit {
@@ -793,7 +799,7 @@ mod tests {
             GamepadFrameRaw::new(1u32, 0i16, 0i16, 0i16, 0i16, 0i16, 0i16),
             GamepadFrameRaw::new(2u32, 1i16, -1i16, 2i16, -2i16, 10i16, 20i16),
         ];
-        w.push_gamepad_input_batch_from_fields(3, frames).unwrap();
+        w.push_gamepad_input_batch_from_fields(3, &frames).unwrap();
         assert_eq!(w.flushes(), 1);
         assert_eq!(w.pending_bytes(), 0);
         let t = w.into_inner().unwrap();

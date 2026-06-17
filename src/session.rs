@@ -543,7 +543,17 @@ impl<T: TransportWrite> HidSession<T> {
             }
             return Ok(0);
         }
-        let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
+        if self.closed {
+            return Err(Error::SessionLifecycle("session closed"));
+        }
+        let slot_idx = self
+            .gamepad_slot
+            .ok_or(Error::SessionLifecycle("gamepad not open"))?;
+        let gamepad = self
+            .gamepad
+            .as_mut()
+            .ok_or(Error::SessionLifecycle("gamepad not open"))?;
+        let transport = &mut self.transport;
         let mut sent = 0usize;
         let mut batch = [[0u8; GAMEPAD_FRAME_BYTES]; DIRECT_GAMEPAD_BATCH_FRAMES];
         let mut batch_len = 0usize;
@@ -551,7 +561,7 @@ impl<T: TransportWrite> HidSession<T> {
         let mut have_batch_id = false;
 
         for frame in frames {
-            if let Some((hid_id, payload)) = gp.full_state_event_slot_idx_raw(
+            if let Some((hid_id, payload)) = gamepad.full_state_event_slot_idx_raw(
                 slot_idx,
                 frame.buttons,
                 frame.left_x,
@@ -570,15 +580,14 @@ impl<T: TransportWrite> HidSession<T> {
                 sent += 1;
 
                 if batch_len == DIRECT_GAMEPAD_BATCH_FRAMES {
-                    self.transport.push_gamepad_input_batch(batch_id, &batch)?;
+                    transport.push_gamepad_input_batch(batch_id, &batch)?;
                     batch_len = 0;
                 }
             }
         }
 
         if batch_len > 0 && have_batch_id {
-            self.transport
-                .push_gamepad_input_batch(batch_id, &batch[..batch_len])?;
+            transport.push_gamepad_input_batch(batch_id, &batch[..batch_len])?;
         }
         Ok(sent)
     }

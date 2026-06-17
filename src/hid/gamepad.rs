@@ -287,7 +287,7 @@ impl GamepadHid {
         slot.axis_right_y = ry;
         slot.axis_left_trigger = lt;
         slot.axis_right_trigger = rt;
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     #[inline]
@@ -313,7 +313,7 @@ impl GamepadHid {
             return None;
         }
         slot.buttons = next;
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     #[inline]
@@ -346,7 +346,7 @@ impl GamepadHid {
         } else {
             slot.buttons &= !bit;
         }
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     /// Apply an axis event. Triggers are always positive; sticks are
@@ -440,7 +440,7 @@ impl GamepadHid {
                 return None;
             }
         }
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     /// Apply both left-stick axes in one report (single UHID_INPUT).
@@ -485,7 +485,7 @@ impl GamepadHid {
         }
         slot.axis_left_x = lx;
         slot.axis_left_y = ly;
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     /// Apply both right-stick axes in one report (single UHID_INPUT).
@@ -530,7 +530,7 @@ impl GamepadHid {
         }
         slot.axis_right_x = rx;
         slot.axis_right_y = ry;
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     /// Apply both triggers in one report (single UHID_INPUT).
@@ -575,7 +575,7 @@ impl GamepadHid {
         }
         slot.axis_left_trigger = lt;
         slot.axis_right_trigger = rt;
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     /// Apply both sticks and both triggers in one report (single
@@ -665,7 +665,7 @@ impl GamepadHid {
         slot.axis_right_y = ry;
         slot.axis_left_trigger = lt;
         slot.axis_right_trigger = rt;
-        Some((Self::slot_hid_id(slot_idx), self.slot_to_payload(slot)))
+        Some((Self::slot_hid_id(slot_idx), Self::slot_to_payload(slot)))
     }
 
     #[inline]
@@ -678,13 +678,13 @@ impl GamepadHid {
             return Err(Error::UnknownGamepad(0));
         }
         slot.gamepad_id = GAMEPAD_ID_INVALID;
-        Ok(ControlMessage::UhidDestroy {
+        Ok(ControlMessage::UhidDestroy(UhidDestroy {
             id: Self::slot_hid_id(slot_idx),
-        })
+        }))
     }
 
     #[inline]
-    fn slot_to_payload(&self, slot: &GamepadSlot) -> [u8; GAMEPAD_REPORT_SIZE] {
+    fn slot_to_payload(slot: &GamepadSlot) -> [u8; GAMEPAD_REPORT_SIZE] {
         let mut data = [0u8; GAMEPAD_REPORT_SIZE];
         data[0..2].copy_from_slice(&slot.axis_left_x.to_le_bytes());
         data[2..4].copy_from_slice(&slot.axis_left_y.to_le_bytes());
@@ -724,7 +724,7 @@ impl GamepadHid {
     #[inline]
     fn slot_to_input_message(&self, hid_id: u16, slot: &GamepadSlot) -> ControlMessage {
         let mut data = [0u8; HID_MAX_SIZE];
-        data[..GAMEPAD_REPORT_SIZE].copy_from_slice(&self.slot_to_payload(slot));
+        data[..GAMEPAD_REPORT_SIZE].copy_from_slice(&Self::slot_to_payload(slot));
         ControlMessage::UhidInput(UhidInput {
             id: hid_id,
             size: GAMEPAD_REPORT_SIZE as u16,

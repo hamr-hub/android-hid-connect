@@ -65,33 +65,6 @@ impl Stats {
     }
 }
 
-/// Read the device-meta message that scrcpy-server sends immediately after
-/// the optional dummy byte. Layout (per `device_msg.c`):
-///
-///   u8   type     (0 = CLIPBOARD)
-///   u32  length   (big-endian)
-///   [length bytes] (UTF-8 text)
-///
-/// DEVICE_MSG_TYPE_CLIPBOARD = 0, so the first byte is 0x00. We treat the
-/// payload as the device-name string.
-fn read_device_meta(stream: &mut TcpStream) -> std::io::Result<String> {
-    let mut type_byte = [0u8; 1];
-    stream.read_exact(&mut type_byte)?;
-    let ty = type_byte[0];
-    if ty == 0 {
-        // CLIPBOARD payload
-        let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf)?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        stream.read_exact(&mut payload)?;
-        Ok(String::from_utf8_lossy(&payload).to_string())
-    } else {
-        // Unknown type — return empty.
-        Ok(String::new())
-    }
-}
-
 /// Read the next device-msg frame and parse it. Returns the parsed type
 /// tag and payload slice.
 fn read_device_msg(stream: &mut TcpStream) -> std::io::Result<(u8, Vec<u8>)> {
@@ -133,7 +106,7 @@ fn main() -> std::process::ExitCode {
     // see scrcpy DesktopConnection.sendDeviceMeta.
     let mut dummy = [0u8; 1];
     match stream.read(&mut dummy) {
-        Ok(n) if n == 1 => stats.ok(&format!("received dummy byte {:#x}", dummy[0])),
+        Ok(1) => stats.ok(&format!("received dummy byte {:#x}", dummy[0])),
         Ok(n) => {
             stats.fail += 1;
             println!("  FAIL  expected 1 dummy byte, got {n}");

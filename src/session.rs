@@ -356,6 +356,168 @@ impl<T: TransportWrite> HidSession<T> {
         self.closed
     }
 
+    // === AI intent methods ===
+    //
+    // Each intent is 1-3 underlying ControlMessages. Naming follows
+    // the LLM function-call convention (press_home not
+    // inject_keycode_home, launch_app not start_app).
+
+    /// Set the screen on or off (`SetDisplayPower`).
+    pub fn set_screen_power(&mut self, on: bool) -> Result<()> {
+        self.send(&ControlMessage::SetDisplayPower(
+            crate::control::message::SetDisplayPower { on },
+        ))
+    }
+
+    /// Inject a raw keycode (Android `KeyEvent.KEYCODE_*`).
+    /// `keycode` and `metastate` follow `InjectKeycode`.
+    pub fn inject_keycode(&mut self, action: u8, keycode: u32,
+                          repeat: u32, metastate: u32) -> Result<()> {
+        self.send(&ControlMessage::InjectKeycode(
+            crate::control::message::InjectKeycode { action, keycode, repeat, metastate },
+        ))
+    }
+
+    /// Press the Home key.
+    pub fn press_home(&mut self) -> Result<()> {
+        self.inject_keycode(0, 3, 0, 0)  // KEYCODE_HOME = 3
+    }
+    /// Press the Back key.
+    pub fn press_back(&mut self) -> Result<()> {
+        self.inject_keycode(0, 4, 0, 0)  // KEYCODE_BACK = 4
+    }
+    /// Open the recents / app-switcher.
+    pub fn open_recents(&mut self) -> Result<()> {
+        self.inject_keycode(0, 187, 0, 0) // KEYCODE_APP_SWITCH = 187
+    }
+    /// Volume up.
+    pub fn volume_up(&mut self) -> Result<()> {
+        self.inject_keycode(0, 24, 0, 0) // KEYCODE_VOLUME_UP = 24
+    }
+    /// Volume down.
+    pub fn volume_down(&mut self) -> Result<()> {
+        self.inject_keycode(0, 25, 0, 0) // KEYCODE_VOLUME_DOWN = 25
+    }
+    /// Volume mute.
+    pub fn volume_mute(&mut self) -> Result<()> {
+        self.inject_keycode(0, 164, 0, 0) // KEYCODE_VOLUME_MUTE = 164
+    }
+
+    /// Expand the notification panel.
+    pub fn show_notifications(&mut self) -> Result<()> {
+        self.send(&ControlMessage::ExpandNotificationPanel)
+    }
+    /// Expand the quick-settings panel.
+    pub fn show_quick_settings(&mut self) -> Result<()> {
+        self.send(&ControlMessage::ExpandSettingsPanel)
+    }
+    /// Collapse notification + quick-settings panels.
+    pub fn collapse_panels(&mut self) -> Result<()> {
+        self.send(&ControlMessage::CollapsePanels)
+    }
+
+    /// Rotate the device display.
+    pub fn rotate_device(&mut self) -> Result<()> {
+        self.send(&ControlMessage::RotateDevice)
+    }
+    /// Resize the virtual display (developer mode).
+    pub fn resize_display(&mut self, w: u16, h: u16) -> Result<()> {
+        self.send(&ControlMessage::ResizeDisplay(
+            crate::control::message::ResizeDisplay { width: w, height: h },
+        ))
+    }
+    /// Toggle the camera torch.
+    pub fn set_torch(&mut self, on: bool) -> Result<()> {
+        self.send(&ControlMessage::CameraSetTorch(
+            crate::control::message::CameraSetTorch { on },
+        ))
+    }
+    /// Camera zoom in.
+    pub fn camera_zoom_in(&mut self) -> Result<()> {
+        self.send(&ControlMessage::CameraZoomIn)
+    }
+    /// Camera zoom out.
+    pub fn camera_zoom_out(&mut self) -> Result<()> {
+        self.send(&ControlMessage::CameraZoomOut)
+    }
+    /// Open the physical-keyboard settings activity.
+    pub fn open_hard_keyboard_settings(&mut self) -> Result<()> {
+        self.send(&ControlMessage::OpenHardKeyboardSettings)
+    }
+    /// Reset the scrcpy video stream.
+    pub fn reset_video(&mut self) -> Result<()> {
+        self.send(&ControlMessage::ResetVideo)
+    }
+    /// Launch an app by package name.
+    pub fn launch_app(&mut self, name: &str) -> Result<()> {
+        self.send(&ControlMessage::StartApp(
+            crate::control::message::StartApp { name: name.to_string() },
+        ))
+    }
+    /// Write text to the device clipboard.
+    pub fn set_clipboard(&mut self, text: &str, paste: bool) -> Result<()> {
+        self.send(&ControlMessage::SetClipboard(
+            crate::control::message::SetClipboard {
+                sequence: 0, paste, text: text.to_string(),
+            },
+        ))
+    }
+    /// Request a clipboard read. **Phase 1 stub**: returns `Ok(())`
+    /// (the read itself is fire-and-forget; the dispatcher will
+    /// reply with an empty string for now). True server-reply
+    /// forwarding is a follow-up run.
+    pub fn get_clipboard(&mut self) -> Result<()> {
+        self.send(&ControlMessage::GetClipboard(
+            crate::control::message::GetClipboard { copy_key: 0 },
+        ))
+    }
+
+    /// Two quick taps at the same coordinate. Sends 4 touch events
+    /// (down / up / down / up).
+    pub fn double_tap(&mut self, x: i32, y: i32) -> Result<()> {
+        self.touch_msg_pub(crate::multitouch::ACTION_DOWN, 0, x, y, 1.0)?;
+        self.touch_msg_pub(crate::multitouch::ACTION_UP, 0, x, y, 0.0)?;
+        self.touch_msg_pub(crate::multitouch::ACTION_DOWN, 0, x, y, 1.0)?;
+        self.touch_msg_pub(crate::multitouch::ACTION_UP, 0, x, y, 0.0)
+    }
+    /// Press, hold for `dur`, then release. Blocks the calling
+    /// thread for `dur` (callers that need non-blocking should
+    /// wrap in `tokio::task::spawn_blocking`).
+    pub fn long_press(&mut self, x: i32, y: i32, dur: std::time::Duration) -> Result<()> {
+        self.touch_msg_pub(crate::multitouch::ACTION_DOWN, 0, x, y, 1.0)?;
+        std::thread::sleep(dur);
+        self.touch_msg_pub(crate::multitouch::ACTION_UP, 0, x, y, 0.0)
+    }
+    /// Three-finger swipe down (Android screenshot gesture).
+    pub fn three_finger_screenshot(&mut self) -> Result<()> {
+        let w = self.screen_w as i32;
+        let h = self.screen_h as i32;
+        for id in 0u64..3 {
+            self.touch_msg_pub(crate::multitouch::ACTION_DOWN, id, w / 4 * (id as i32 + 1), h / 4, 1.0)?;
+        }
+        for step in 1..=10 {
+            for id in 0u64..3 {
+                self.touch_msg_pub(
+                    crate::multitouch::ACTION_MOVE, id,
+                    w / 4 * (id as i32 + 1),
+                    h / 4 + (h / 2 * step / 10),
+                    1.0,
+                )?;
+            }
+        }
+        for id in 0u64..3 {
+            self.touch_msg_pub(crate::multitouch::ACTION_UP, id, w / 4 * (id as i32 + 1), h * 3 / 4, 0.0)?;
+        }
+        Ok(())
+    }
+
+    // === end AI intent methods ===
+
+    fn touch_msg_pub(&mut self, action: u8, pointer_id: u64,
+                     x: i32, y: i32, pressure: f32) -> Result<()> {
+        self.inject_touch(action, pointer_id, x, y, pressure)
+    }
+
     /// Send `UHID_DESTROY` for every device that is still open. Used by
     /// both [`Self::close`] and the panic-safe `Drop` impl.
     fn try_close_all(&mut self) -> Result<()> {

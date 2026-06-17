@@ -21,28 +21,39 @@ fn split_messages(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
         let tag = bytes[i];
         match tag {
             12 => {
-                if i + 8 > bytes.len() { break; }
+                if i + 8 > bytes.len() {
+                    break;
+                }
                 let name_len = bytes[i + 7] as usize;
-                if i + 8 + name_len + 2 > bytes.len() { break; }
-                let rd_size = u16::from_be_bytes([
-                    bytes[i + 8 + name_len],
-                    bytes[i + 8 + name_len + 1],
-                ]) as usize;
+                if i + 8 + name_len + 2 > bytes.len() {
+                    break;
+                }
+                let rd_size =
+                    u16::from_be_bytes([bytes[i + 8 + name_len], bytes[i + 8 + name_len + 1]])
+                        as usize;
                 let total = 8 + name_len + 2 + rd_size;
-                if i + total > bytes.len() { break; }
+                if i + total > bytes.len() {
+                    break;
+                }
                 out.push((tag, bytes[i..i + total].to_vec()));
                 i += total;
             }
             13 => {
-                if i + 5 > bytes.len() { break; }
+                if i + 5 > bytes.len() {
+                    break;
+                }
                 let size = u16::from_be_bytes([bytes[i + 3], bytes[i + 4]]) as usize;
                 let total = 5 + size;
-                if i + total > bytes.len() { break; }
+                if i + total > bytes.len() {
+                    break;
+                }
                 out.push((tag, bytes[i..i + total].to_vec()));
                 i += total;
             }
             14 => {
-                if i + 3 > bytes.len() { break; }
+                if i + 3 > bytes.len() {
+                    break;
+                }
                 out.push((tag, bytes[i..i + 3].to_vec()));
                 i += 3;
             }
@@ -53,19 +64,24 @@ fn split_messages(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
 }
 
 fn count_create_for(bytes: &[u8], id: u16) -> usize {
-    split_messages(bytes).iter()
+    split_messages(bytes)
+        .iter()
         .filter(|(t, m)| *t == 12 && u16::from_be_bytes([m[1], m[2]]) == id)
         .count()
 }
 
 fn count_destroy_for(bytes: &[u8], id: u16) -> usize {
-    split_messages(bytes).iter()
+    split_messages(bytes)
+        .iter()
         .filter(|(t, m)| *t == 14 && u16::from_be_bytes([m[1], m[2]]) == id)
         .count()
 }
 
 fn count_inputs(bytes: &[u8]) -> usize {
-    split_messages(bytes).iter().filter(|(t, _)| *t == 13).count()
+    split_messages(bytes)
+        .iter()
+        .filter(|(t, _)| *t == 13)
+        .count()
 }
 
 fn count_touch_events(bytes: &[u8]) -> usize {
@@ -100,10 +116,18 @@ fn open_creates_three_devices() {
     let bytes = run(OpenRequest::all(), |_| {});
     assert_eq!(count_create_for(&bytes, 1), 1, "kbd CREATE");
     assert_eq!(count_create_for(&bytes, 2), 1, "mouse CREATE");
-    assert_eq!(count_create_for(&bytes, HID_ID_GAMEPAD_FIRST), 1, "gamepad CREATE");
+    assert_eq!(
+        count_create_for(&bytes, HID_ID_GAMEPAD_FIRST),
+        1,
+        "gamepad CREATE"
+    );
     assert_eq!(count_destroy_for(&bytes, 1), 1, "kbd DESTROY");
     assert_eq!(count_destroy_for(&bytes, 2), 1, "mouse DESTROY");
-    assert_eq!(count_destroy_for(&bytes, HID_ID_GAMEPAD_FIRST), 1, "gamepad DESTROY");
+    assert_eq!(
+        count_destroy_for(&bytes, HID_ID_GAMEPAD_FIRST),
+        1,
+        "gamepad DESTROY"
+    );
 }
 
 #[test]
@@ -130,17 +154,31 @@ fn tap_emits_touch_down_up() {
         s.set_screen_size(1080, 2400);
         s.tap(540, 1200).unwrap();
     });
-    assert_eq!(count_touch_events(&bytes), 2, "expected 2 touch events (down + up)");
+    assert_eq!(
+        count_touch_events(&bytes),
+        2,
+        "expected 2 touch events (down + up)"
+    );
 }
 
 #[test]
 fn swipe_emits_intermediate_moves() {
     let bytes = run(OpenRequest::kbd_only(), |s| {
         s.set_screen_size(1080, 2400);
-        s.swipe((100, 500), (900, 500), std::time::Duration::from_millis(300), 5).unwrap();
+        s.swipe(
+            (100, 500),
+            (900, 500),
+            std::time::Duration::from_millis(300),
+            5,
+        )
+        .unwrap();
     });
     let n = count_touch_events(&bytes);
-    assert!(n >= 5, "expected >= 5 touch events for 5-step swipe, got {}", n);
+    assert!(
+        n >= 5,
+        "expected >= 5 touch events for 5-step swipe, got {}",
+        n
+    );
 }
 
 #[test]

@@ -61,6 +61,5 @@ pub use hid::keyboard::KeyboardHid;
 pub use hid::mouse::MouseHid;
 pub use hid::{HidDevice, HidReport};
 pub use types::{
-    GamepadAxis, GamepadButton, Modifiers, MouseButton, Scancode,
-    HID_ID_KEYBOARD, HID_ID_MOUSE,
+    GamepadAxis, GamepadButton, Modifiers, MouseButton, Scancode, HID_ID_KEYBOARD, HID_ID_MOUSE,
 };

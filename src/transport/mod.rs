@@ -12,9 +12,7 @@ use crate::error::Result;
 use crate::error::TransportWrite;
 
 /// Send a single control message over the transport.
-pub fn send_one<W: TransportWrite>(transport: &mut W, msg: &ControlMessage)
-    -> Result<()>
-{
+pub fn send_one<W: TransportWrite>(transport: &mut W, msg: &ControlMessage) -> Result<()> {
     let bytes = msg.serialize()?;
     transport.write_all(&bytes)?;
     transport.flush()
@@ -24,8 +22,7 @@ pub fn send_one<W: TransportWrite>(transport: &mut W, msg: &ControlMessage)
 /// if any. Non-droppable messages (UHID_CREATE / UHID_DESTROY) are not
 /// retried — the caller is expected to retry the whole batch on
 /// failure.
-pub fn send_batch<W: TransportWrite>(transport: &mut W,
-                                     msgs: &[ControlMessage]) -> Result<()> {
+pub fn send_batch<W: TransportWrite>(transport: &mut W, msgs: &[ControlMessage]) -> Result<()> {
     for m in msgs {
         send_one(transport, m)?;
     }
@@ -36,9 +33,10 @@ pub fn send_batch<W: TransportWrite>(transport: &mut W,
 /// use: `127.0.0.1:27183` after `adb forward tcp:27183 localabstract:scrcpy`).
 pub fn open_tcp(host: &str, port: u16) -> std::io::Result<std::net::TcpStream> {
     use std::net::ToSocketAddrs;
-    let addr = (host, port).to_socket_addrs()?.next().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "no address")
-    })?;
+    let addr = (host, port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no address"))?;
     let stream = std::net::TcpStream::connect(addr)?;
     stream.set_nodelay(true).ok();
     Ok(stream)
@@ -52,8 +50,12 @@ pub struct MockTransport {
 }
 
 impl MockTransport {
-    pub fn new() -> Self { Self { bytes: Vec::new() } }
-    pub fn into_bytes(self) -> Vec<u8> { self.bytes }
+    pub fn new() -> Self {
+        Self { bytes: Vec::new() }
+    }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
 }
 
 impl Write for MockTransport {
@@ -61,7 +63,9 @@ impl Write for MockTransport {
         self.bytes.extend_from_slice(buf);
         Ok(buf.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -73,8 +77,7 @@ mod tests {
     #[test]
     fn mock_collects_bytes() {
         let mut t = MockTransport::new();
-        send_one(&mut t, &ControlMessage::UhidDestroy(UhidDestroy { id: 1 }))
-            .unwrap();
+        send_one(&mut t, &ControlMessage::UhidDestroy(UhidDestroy { id: 1 })).unwrap();
         assert_eq!(t.bytes, vec![14, 0x00, 0x01]);
     }
 
@@ -84,7 +87,11 @@ mod tests {
         let mut data = [0u8; HID_MAX_SIZE];
         data[0] = 0x02;
         let msgs = vec![
-            ControlMessage::UhidInput(UhidInput { id: 1, size: 8, data }),
+            ControlMessage::UhidInput(UhidInput {
+                id: 1,
+                size: 8,
+                data,
+            }),
             ControlMessage::UhidDestroy(UhidDestroy { id: 1 }),
         ];
         send_batch(&mut t, &msgs).unwrap();
@@ -110,7 +117,9 @@ mod tests {
     fn create_message_serialization() {
         let mut t = MockTransport::new();
         let msg = ControlMessage::UhidCreate(UhidCreate {
-            id: 1, vendor_id: 0, product_id: 0,
+            id: 1,
+            vendor_id: 0,
+            product_id: 0,
             name: Some("Test".to_string()),
             report_desc: vec![0x05, 0x01],
         });

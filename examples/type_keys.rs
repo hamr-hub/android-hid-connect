@@ -45,13 +45,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let text = "Hello, world!";
     for c in text.chars() {
-        let Some((sc, shift)) = char_to_key(c) else { continue };
-        let mods = if shift { Modifiers::LSHIFT } else { Modifiers::empty() };
+        let Some((sc, shift)) = char_to_key(c) else {
+            continue;
+        };
+        let mods = if shift {
+            Modifiers::LSHIFT
+        } else {
+            Modifiers::empty()
+        };
         // Press
         send_batch(&mut stream, &[kbd.key_event(sc, true, mods).unwrap()])?;
         thread::sleep(Duration::from_millis(20));
         // Release
-        send_batch(&mut stream, &[kbd.key_event(sc, false, Modifiers::empty()).unwrap()])?;
+        send_batch(
+            &mut stream,
+            &[kbd.key_event(sc, false, Modifiers::empty()).unwrap()],
+        )?;
         thread::sleep(Duration::from_millis(20));
     }
 

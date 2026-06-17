@@ -30,9 +30,8 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use android_hid_connect::control::message::{
-    ControlMessage, GetClipboard, InjectKeycode, InjectScrollEvent,
-    InjectText, InjectTouchEvent, ResizeDisplay, SetClipboard,
-    SetDisplayPower, StartApp, UhidCreate, UhidDestroy, UhidInput,
+    ControlMessage, GetClipboard, InjectKeycode, InjectScrollEvent, InjectText, InjectTouchEvent,
+    ResizeDisplay, SetClipboard, SetDisplayPower, StartApp, UhidCreate, UhidDestroy, UhidInput,
 };
 use android_hid_connect::transport::{open_tcp, send_one};
 use android_hid_connect::types::{
@@ -50,12 +49,7 @@ struct Stats {
 }
 
 impl Stats {
-    fn check<T: std::fmt::Debug + PartialEq>(
-        &mut self,
-        label: &str,
-        got: T,
-        want: T,
-    ) {
+    fn check<T: std::fmt::Debug + PartialEq>(&mut self, label: &str, got: T, want: T) {
         if got == want {
             self.pass += 1;
             println!("  PASS  {label}: got={got:?}");
@@ -225,11 +219,7 @@ fn main() -> std::process::ExitCode {
         let destroy = gp.close(slot).unwrap();
         send_one(&mut stream, &destroy).unwrap();
     }
-    stats.check(
-        "8 gamepad slots opened+closed",
-        hid_ids.len(),
-        8usize,
-    );
+    stats.check("8 gamepad slots opened+closed", hid_ids.len(), 8usize);
     stats.check(
         "gamepad HID ids sequential 3..=10",
         hid_ids,
@@ -322,9 +312,21 @@ fn main() -> std::process::ExitCode {
         size: 8,
         data: [0u8; HID_MAX_SIZE],
     });
-    stats.check("UhidCreate.is_critical()", critical_create.is_critical(), true);
-    stats.check("UhidDestroy.is_critical()", critical_destroy.is_critical(), true);
-    stats.check("UhidInput.is_critical()", droppable_input.is_critical(), false);
+    stats.check(
+        "UhidCreate.is_critical()",
+        critical_create.is_critical(),
+        true,
+    );
+    stats.check(
+        "UhidDestroy.is_critical()",
+        critical_destroy.is_critical(),
+        true,
+    );
+    stats.check(
+        "UhidInput.is_critical()",
+        droppable_input.is_critical(),
+        false,
+    );
 
     // ---- 7. read back a couple of server messages ----
     println!("\n[6] server → host messages (5s budget)");
@@ -338,7 +340,10 @@ fn main() -> std::process::ExitCode {
                     0 => {
                         // CLIPBOARD
                         let txt = String::from_utf8_lossy(&payload).to_string();
-                        println!("  RECV  DEVICE_MSG_CLIPBOARD len={} text={txt:?}", payload.len());
+                        println!(
+                            "  RECV  DEVICE_MSG_CLIPBOARD len={} text={txt:?}",
+                            payload.len()
+                        );
                     }
                     1 => {
                         // ACK_CLIPBOARD: u64 sequence
@@ -355,7 +360,9 @@ fn main() -> std::process::ExitCode {
                             let id = u16::from_be_bytes(payload[..2].try_into().unwrap());
                             let sz = u16::from_be_bytes(payload[2..4].try_into().unwrap()) as usize;
                             let data = &payload[4..4 + sz.min(payload.len().saturating_sub(4))];
-                            println!("  RECV  DEVICE_MSG_UHID_OUTPUT id={id} size={sz} data={data:02x?}");
+                            println!(
+                                "  RECV  DEVICE_MSG_UHID_OUTPUT id={id} size={sz} data={data:02x?}"
+                            );
                         } else {
                             println!("  RECV  DEVICE_MSG_UHID_OUTPUT (short)");
                         }
@@ -377,8 +384,14 @@ fn main() -> std::process::ExitCode {
             }
         }
     }
-    stats.check("server emitted ≥ 0 device messages (timeout is OK)", server_msgs >= 0, true);
-    stats.ok(&format!("server emitted {server_msgs} device message(s) total"));
+    stats.check(
+        "server emitted ≥ 0 device messages (timeout is OK)",
+        server_msgs >= 0,
+        true,
+    );
+    stats.ok(&format!(
+        "server emitted {server_msgs} device message(s) total"
+    ));
 
     println!("\n=== summary ===");
     println!("  pass: {}", stats.pass);

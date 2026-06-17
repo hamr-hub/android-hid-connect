@@ -24,8 +24,10 @@ fn default_open_enables_coalescing() {
     // pushed = 1 CREATE (critical) + 100 inputs = 101
     let (pushed, written, pending) = s.stats();
     assert_eq!(pushed, 101);
-    assert!(written < (pushed * 20) || pending > 0,
-        "coalescing must batch: pushed={pushed} written={written} pending={pending}");
+    assert!(
+        written < (pushed * 20) || pending > 0,
+        "coalescing must batch: pushed={pushed} written={written} pending={pending}"
+    );
     s.close().unwrap();
 }
 
@@ -55,7 +57,10 @@ fn close_flushes_via_into_inner() {
     let bytes = t.into_bytes();
     // 1 CREATE (gamepad, > 15B) + 5 INPUTs (~20B each) + 1 DESTROY (3B)
     let input_count = bytes.iter().filter(|b| **b == TAG_UHID_INPUT).count();
-    assert!(input_count >= 5, "expected ≥ 5 UhidInput frames, got {input_count}");
+    assert!(
+        input_count >= 5,
+        "expected ≥ 5 UhidInput frames, got {input_count}"
+    );
 }
 
 #[test]
@@ -63,15 +68,23 @@ fn coalesce_false_disables_batching() {
     // With coalesce=false, each `send` flushes immediately.
     let mut s = HidSession::open(
         MockTransport::new(),
-        OpenRequest { gamepad: true, coalesce: false, ..OpenRequest::none() },
-    ).unwrap();
+        OpenRequest {
+            gamepad: true,
+            coalesce: false,
+            ..OpenRequest::none()
+        },
+    )
+    .unwrap();
     s.set_stick(GamepadAxis::LeftX, 0.1).unwrap();
     s.set_stick(GamepadAxis::LeftX, 0.2).unwrap();
     s.set_stick(GamepadAxis::LeftX, 0.3).unwrap();
     // pushed = 1 CREATE (critical) + 3 inputs = 4
     let (pushed, written, pending) = s.stats();
     assert_eq!(pushed, 4);
-    assert!(pending == 0, "coalesce=false should not buffer: pending={pending}");
+    assert!(
+        pending == 0,
+        "coalesce=false should not buffer: pending={pending}"
+    );
     // written should be at least 3 inputs worth of bytes
     assert!(written > 30, "written={written} too small for 3 inputs");
     s.close().unwrap();
@@ -89,7 +102,8 @@ fn critical_message_passes_through() {
     let t = s.into_inner();
     let bytes = t.into_bytes();
     // Find the DESTROY for the gamepad HID id (3).
-    let gamepad_destroy = bytes.windows(3)
+    let gamepad_destroy = bytes
+        .windows(3)
         .any(|w| w == [14, 0x00, HID_ID_GAMEPAD_FIRST as u8]);
     assert!(gamepad_destroy, "expected DESTROY for gamepad id 3");
 }

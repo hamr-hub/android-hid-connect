@@ -25,7 +25,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Hold A.
     send_batch(
         &mut stream,
-        &[gp.button_event(0xCAFE_BABE, GamepadButton::South, true).unwrap()],
+        &[gp.button_event(0xCAFE_BABE, GamepadButton::South, true)
+            .unwrap()],
     )?;
     thread::sleep(Duration::from_millis(500));
 
@@ -33,7 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..20 {
         send_batch(
             &mut stream,
-            &[gp.axis_event(0xCAFE_BABE, GamepadAxis::RightX, 32767).unwrap()],
+            &[gp.axis_event(0xCAFE_BABE, GamepadAxis::RightX, 32767)
+                .unwrap()],
         )?;
         thread::sleep(Duration::from_millis(50));
     }
@@ -42,7 +44,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     send_batch(
         &mut stream,
         &[
-            gp.button_event(0xCAFE_BABE, GamepadButton::South, false).unwrap(),
+            gp.button_event(0xCAFE_BABE, GamepadButton::South, false)
+                .unwrap(),
             gp.axis_event(0xCAFE_BABE, GamepadAxis::RightX, 0).unwrap(),
         ],
     )?;

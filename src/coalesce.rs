@@ -133,16 +133,22 @@ impl<T: TransportWrite> CoalescingWriter<T> {
 
     /// Number of bytes currently buffered (not yet on the wire).
     #[inline]
-    pub fn pending_bytes(&self) -> usize { self.pending.len() }
+    pub fn pending_bytes(&self) -> usize {
+        self.pending.len()
+    }
 
     /// Total messages pushed through this writer since construction.
     #[inline]
-    pub fn pushed(&self) -> u64 { self.pushed }
+    pub fn pushed(&self) -> u64 {
+        self.pushed
+    }
 
     /// Total bytes actually written to the transport (sum of all
     /// `write_all` payloads, including critical messages).
     #[inline]
-    pub fn written(&self) -> u64 { self.written }
+    pub fn written(&self) -> u64 {
+        self.written
+    }
 
     /// Coalescing ratio: `pushed` / `flushes`. A value of 1 means
     /// every message was flushed individually; a value of 100 means
@@ -169,9 +175,7 @@ impl<T: TransportWrite> Drop for CoalescingWriter<T> {
     /// is logged to stderr so the process isn't aborted by a
     /// double-panic.
     fn drop(&mut self) {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.flush_now()
-        }));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.flush_now()));
         if let Err(panic) = result {
             eprintln!(
                 "CoalescingWriter::drop: flush failed during unwind: {:?}",
@@ -184,9 +188,9 @@ impl<T: TransportWrite> Drop for CoalescingWriter<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::message::{ControlMessage, UhidInput, UhidDestroy};
-    use crate::types::HID_MAX_SIZE;
+    use crate::control::message::{ControlMessage, UhidDestroy, UhidInput};
     use crate::transport::MockTransport;
+    use crate::types::HID_MAX_SIZE;
 
     fn input_msg(id: u16, byte: u8) -> ControlMessage {
         let mut data = [0u8; HID_MAX_SIZE];
@@ -200,7 +204,7 @@ mod tests {
         const WIRE_SIZE: usize = 13;
         let mut w = CoalescingWriter::with_limits(
             MockTransport::new(),
-            Duration::from_millis(100),  // long window
+            Duration::from_millis(100), // long window
             4096,
         );
         let r1 = w.push(&input_msg(1, 0x10)).unwrap();
@@ -212,7 +216,11 @@ mod tests {
         assert_eq!(w.pending_bytes(), 3 * WIRE_SIZE);
         let t = w.into_inner().unwrap();
         let bytes = t.into_bytes();
-        assert_eq!(bytes.len(), 3 * WIRE_SIZE, "all 3 messages flushed in 1 write_all");
+        assert_eq!(
+            bytes.len(),
+            3 * WIRE_SIZE,
+            "all 3 messages flushed in 1 write_all"
+        );
     }
 
     #[test]
@@ -221,11 +229,15 @@ mod tests {
         // 13 so the first input trips the flush.
         let mut w = CoalescingWriter::with_limits(
             MockTransport::new(),
-            Duration::from_secs(60),  // window never expires in this test
-            13,                        // hard limit = exactly 1 UhidInput
+            Duration::from_secs(60), // window never expires in this test
+            13,                      // hard limit = exactly 1 UhidInput
         );
         let r1 = w.push(&input_msg(1, 0x10)).unwrap();
-        assert_eq!(r1, FlushReason::Full, "13-byte input hits the 13-byte hard limit");
+        assert_eq!(
+            r1,
+            FlushReason::Full,
+            "13-byte input hits the 13-byte hard limit"
+        );
         let r2 = w.push(&input_msg(1, 0x20)).unwrap();
         assert_eq!(r2, FlushReason::Full,
             "second 13-byte input also hits the 13-byte limit (buffer was empty after the first force-flush)");
@@ -237,17 +249,16 @@ mod tests {
 
     #[test]
     fn critical_message_flushes_then_writes() {
-        let mut w = CoalescingWriter::with_limits(
-            MockTransport::new(),
-            Duration::from_millis(100),
-            4096,
-        );
+        let mut w =
+            CoalescingWriter::with_limits(MockTransport::new(), Duration::from_millis(100), 4096);
         // Buffer some inputs.
         w.push(&input_msg(1, 0x10)).unwrap();
         w.push(&input_msg(1, 0x20)).unwrap();
         assert_eq!(w.pending_bytes(), 26);
         // Critical message — must flush pending + write critical.
-        let r = w.push(&ControlMessage::UhidDestroy(UhidDestroy { id: 1 })).unwrap();
+        let r = w
+            .push(&ControlMessage::UhidDestroy(UhidDestroy { id: 1 }))
+            .unwrap();
         assert_eq!(r, FlushReason::Critical);
         let t = w.into_inner().unwrap();
         let bytes = t.into_bytes();
@@ -259,11 +270,8 @@ mod tests {
 
     #[test]
     fn drop_flushes_remainder() {
-        let mut w = CoalescingWriter::with_limits(
-            MockTransport::new(),
-            Duration::from_millis(100),
-            4096,
-        );
+        let mut w =
+            CoalescingWriter::with_limits(MockTransport::new(), Duration::from_millis(100), 4096);
         w.push(&input_msg(1, 0x10)).unwrap();
         w.push(&input_msg(1, 0x20)).unwrap();
         assert_eq!(w.pending_bytes(), 26);
@@ -279,22 +287,16 @@ mod tests {
     #[test]
     fn drop_panic_safe() {
         use std::panic;
-        let w = CoalescingWriter::with_limits(
-            MockTransport::new(),
-            Duration::from_millis(100),
-            4096,
-        );
+        let w =
+            CoalescingWriter::with_limits(MockTransport::new(), Duration::from_millis(100), 4096);
         let r = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(w)));
         assert!(r.is_ok(), "Drop must not panic");
     }
 
     #[test]
     fn stats_track_messages() {
-        let mut w = CoalescingWriter::with_limits(
-            MockTransport::new(),
-            Duration::from_millis(100),
-            4096,
-        );
+        let mut w =
+            CoalescingWriter::with_limits(MockTransport::new(), Duration::from_millis(100), 4096);
         w.push(&input_msg(1, 0x10)).unwrap();
         w.push(&input_msg(1, 0x20)).unwrap();
         w.flush_now().unwrap();

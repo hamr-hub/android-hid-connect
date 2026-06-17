@@ -24,8 +24,8 @@ use crate::error::{Error, Result};
 use crate::hid::descriptor::GAMEPAD_REPORT_DESC;
 use crate::hid::{HidDevice, HidReport};
 use crate::types::{
-    dpad_hat_value, GamepadAxis, GamepadButton, GAMEPAD_ID_INVALID,
-    HID_ID_GAMEPAD_FIRST, HID_ID_GAMEPAD_LAST, HID_MAX_SIZE, MAX_GAMEPADS,
+    dpad_hat_value, GamepadAxis, GamepadButton, GAMEPAD_ID_INVALID, HID_ID_GAMEPAD_FIRST,
+    HID_ID_GAMEPAD_LAST, HID_MAX_SIZE, MAX_GAMEPADS,
 };
 
 /// Total size of a gamepad HID input report.
@@ -40,11 +40,11 @@ const BUTTONS_MASK: u32 = 0xFFFF;
 /// does not bleed dpad state into the next opened gamepad.
 const SLOT_FREE_BUTTONS: u32 = 0;
 
-const SC_GAMEPAD_AXIS_LEFT_TRIGGER:  i16 = GamepadAxis::LeftTrigger  as i16;
+const SC_GAMEPAD_AXIS_LEFT_TRIGGER: i16 = GamepadAxis::LeftTrigger as i16;
 const SC_GAMEPAD_AXIS_RIGHT_TRIGGER: i16 = GamepadAxis::RightTrigger as i16;
 
-const SC_GAMEPAD_AXIS_LEFTX:  i16 = GamepadAxis::LeftX as i16;
-const SC_GAMEPAD_AXIS_LEFTY:  i16 = GamepadAxis::LeftY as i16;
+const SC_GAMEPAD_AXIS_LEFTX: i16 = GamepadAxis::LeftX as i16;
+const SC_GAMEPAD_AXIS_LEFTY: i16 = GamepadAxis::LeftY as i16;
 const SC_GAMEPAD_AXIS_RIGHTX: i16 = GamepadAxis::RightX as i16;
 const SC_GAMEPAD_AXIS_RIGHTY: i16 = GamepadAxis::RightY as i16;
 
@@ -73,7 +73,9 @@ pub struct GamepadHid {
 }
 
 impl Default for GamepadHid {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GamepadHid {
@@ -93,7 +95,9 @@ impl GamepadHid {
 
     /// Find a free slot, if any.
     fn free_slot(&self) -> Option<usize> {
-        self.slots.iter().position(|s| s.gamepad_id == GAMEPAD_ID_INVALID)
+        self.slots
+            .iter()
+            .position(|s| s.gamepad_id == GAMEPAD_ID_INVALID)
     }
 
     /// Find the slot bound to a given gamepad id.
@@ -103,8 +107,7 @@ impl GamepadHid {
 
     /// Allocate a slot for `gamepad_id` and return the HID id assigned
     /// to it. The slot's axes and button state are reset.
-    pub fn open(&mut self, gamepad_id: u32,
-                name: Option<&str>) -> Result<(u16, ControlMessage)> {
+    pub fn open(&mut self, gamepad_id: u32, name: Option<&str>) -> Result<(u16, ControlMessage)> {
         if gamepad_id == GAMEPAD_ID_INVALID {
             return Err(Error::UnknownGamepad(gamepad_id));
         }
@@ -113,7 +116,10 @@ impl GamepadHid {
             // also does not fail in this case, but we re-use the same
             // slot to keep things idempotent.
             let idx = self.find_slot(gamepad_id).unwrap();
-            return Ok((Self::slot_hid_id(idx), self.build_create(Self::slot_hid_id(idx), name)?));
+            return Ok((
+                Self::slot_hid_id(idx),
+                self.build_create(Self::slot_hid_id(idx), name)?,
+            ));
         }
         let slot_idx = self.free_slot().ok_or(Error::NoGamepadSlot)?;
         let hid_id = Self::slot_hid_id(slot_idx);
@@ -136,7 +142,8 @@ impl GamepadHid {
         if gamepad_id == GAMEPAD_ID_INVALID {
             return Err(Error::UnknownGamepad(gamepad_id));
         }
-        let slot_idx = self.find_slot(gamepad_id)
+        let slot_idx = self
+            .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
         self.slots[slot_idx].gamepad_id = GAMEPAD_ID_INVALID;
         Ok(ControlMessage::UhidDestroy(UhidDestroy {
@@ -156,13 +163,22 @@ impl GamepadHid {
     }
 
     /// Apply a button event and return the resulting UHID_INPUT message.
-    pub fn button_event(&mut self, gamepad_id: u32, button: GamepadButton,
-                        pressed: bool) -> Result<ControlMessage> {
-        let slot_idx = self.find_slot(gamepad_id)
+    pub fn button_event(
+        &mut self,
+        gamepad_id: u32,
+        button: GamepadButton,
+        pressed: bool,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
         let slot = &mut self.slots[slot_idx];
         let bit = button as u32;
-        if pressed { slot.buttons |= bit; } else { slot.buttons &= !bit; }
+        if pressed {
+            slot.buttons |= bit;
+        } else {
+            slot.buttons &= !bit;
+        }
         let hid_id = Self::slot_hid_id(slot_idx);
         let data = slot_report_bytes(hid_id, slot);
         Ok(to_input_message(hid_id, &data))
@@ -170,17 +186,22 @@ impl GamepadHid {
 
     /// Apply an axis event. Triggers are always positive; sticks are
     /// signed. Out-of-range axis values are clamped.
-    pub fn axis_event(&mut self, gamepad_id: u32, axis: GamepadAxis,
-                      value: i16) -> Result<ControlMessage> {
-        let slot_idx = self.find_slot(gamepad_id)
+    pub fn axis_event(
+        &mut self,
+        gamepad_id: u32,
+        axis: GamepadAxis,
+        value: i16,
+    ) -> Result<ControlMessage> {
+        let slot_idx = self
+            .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
         let slot = &mut self.slots[slot_idx];
         match axis as i16 {
-            x if x == SC_GAMEPAD_AXIS_LEFTX  => slot.axis_left_x  = axis_rescale(value),
-            x if x == SC_GAMEPAD_AXIS_LEFTY  => slot.axis_left_y  = axis_rescale(value),
+            x if x == SC_GAMEPAD_AXIS_LEFTX => slot.axis_left_x = axis_rescale(value),
+            x if x == SC_GAMEPAD_AXIS_LEFTY => slot.axis_left_y = axis_rescale(value),
             x if x == SC_GAMEPAD_AXIS_RIGHTX => slot.axis_right_x = axis_rescale(value),
             x if x == SC_GAMEPAD_AXIS_RIGHTY => slot.axis_right_y = axis_rescale(value),
-            x if x == SC_GAMEPAD_AXIS_LEFT_TRIGGER  => {
+            x if x == SC_GAMEPAD_AXIS_LEFT_TRIGGER => {
                 slot.axis_left_trigger = (value.max(0) as u16).min(0x7FFF);
             }
             x if x == SC_GAMEPAD_AXIS_RIGHT_TRIGGER => {
@@ -200,7 +221,10 @@ impl GamepadHid {
 
     /// Number of gamepads currently registered.
     pub fn active_count(&self) -> usize {
-        self.slots.iter().filter(|s| s.gamepad_id != GAMEPAD_ID_INVALID).count()
+        self.slots
+            .iter()
+            .filter(|s| s.gamepad_id != GAMEPAD_ID_INVALID)
+            .count()
     }
 
     /// Build a UHID_CREATE for a given HID id (after `open` returns one).
@@ -241,7 +265,10 @@ impl HidDevice for GamepadHid {
 
     fn open_message(&self, _name: Option<&str>) -> Result<ControlMessage> {
         // Use a default-allocated slot if one is free.
-        Ok(Self::create_message(HID_ID_GAMEPAD_FIRST, Some("Microsoft X-Box 360 Pad")))
+        Ok(Self::create_message(
+            HID_ID_GAMEPAD_FIRST,
+            Some("Microsoft X-Box 360 Pad"),
+        ))
     }
 
     fn close_message(&self) -> Result<ControlMessage> {
@@ -287,7 +314,9 @@ fn to_input_message(hid_id: u16, data: &[u8]) -> ControlMessage {
 mod tests {
     use super::*;
 
-    fn build() -> GamepadHid { GamepadHid::new() }
+    fn build() -> GamepadHid {
+        GamepadHid::new()
+    }
 
     #[test]
     fn open_assigns_first_slot() {

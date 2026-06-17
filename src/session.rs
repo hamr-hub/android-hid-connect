@@ -15,17 +15,13 @@
 use std::time::Duration;
 
 use crate::coalesce::CoalescingWriter;
-use crate::control::message::{
-    ControlMessage, InjectTouchEvent,
-};
+use crate::control::message::{ControlMessage, InjectTouchEvent};
 use crate::error::{Error, Result, TransportWrite};
 use crate::hid::gamepad::GamepadHid;
 use crate::hid::keyboard::KeyboardHid;
 use crate::hid::mouse::MouseHid;
 use crate::hid::HidDevice;
-use crate::types::{
-    GamepadAxis, GamepadButton, Modifiers, Scancode, HID_ID_GAMEPAD_FIRST,
-};
+use crate::types::{GamepadAxis, GamepadButton, Modifiers, Scancode, HID_ID_GAMEPAD_FIRST};
 
 /// Which HID devices the session should open. Touch events are always
 /// available (no UHID device needed) — they ride on the same control
@@ -47,19 +43,44 @@ pub struct OpenRequest {
 
 impl OpenRequest {
     pub const fn none() -> Self {
-        Self { kbd: false, mouse: false, gamepad: false, coalesce: true }
+        Self {
+            kbd: false,
+            mouse: false,
+            gamepad: false,
+            coalesce: true,
+        }
     }
     pub const fn all() -> Self {
-        Self { kbd: true,  mouse: true,  gamepad: true,  coalesce: true }
+        Self {
+            kbd: true,
+            mouse: true,
+            gamepad: true,
+            coalesce: true,
+        }
     }
     pub const fn kbd_only() -> Self {
-        Self { kbd: true,  mouse: false, gamepad: false, coalesce: true }
+        Self {
+            kbd: true,
+            mouse: false,
+            gamepad: false,
+            coalesce: true,
+        }
     }
     pub const fn mouse_only() -> Self {
-        Self { kbd: false, mouse: true,  gamepad: false, coalesce: true }
+        Self {
+            kbd: false,
+            mouse: true,
+            gamepad: false,
+            coalesce: true,
+        }
     }
     pub const fn gamepad_only() -> Self {
-        Self { kbd: false, mouse: false, gamepad: true,  coalesce: true }
+        Self {
+            kbd: false,
+            mouse: false,
+            gamepad: true,
+            coalesce: true,
+        }
     }
 }
 
@@ -93,7 +114,7 @@ unsafe impl<T: TransportWrite + Send> Send for HidSession<T> {}
 /// AKEY_EVENT_ACTION_DOWN / UP / MOVE (mirrors Android's
 /// `MotionEvent.ACTION_*` constants used by scrcpy).
 const ACTION_DOWN: u8 = 0;
-const ACTION_UP:   u8 = 1;
+const ACTION_UP: u8 = 1;
 const ACTION_MOVE: u8 = 2;
 
 impl<T: TransportWrite> HidSession<T> {
@@ -137,8 +158,8 @@ impl<T: TransportWrite> HidSession<T> {
             // `GamepadHid::open` returns the assigned hid_id; we use the
             // public `create_message` helper to build the CREATE payload
             // with the correct id.
-            let (hid_id, _msg) = g.open(HID_ID_GAMEPAD_FIRST as u32,
-                                         Some("Microsoft X-Box 360 Pad"))?;
+            let (hid_id, _msg) =
+                g.open(HID_ID_GAMEPAD_FIRST as u32, Some("Microsoft X-Box 360 Pad"))?;
             let create = GamepadHid::create_message(hid_id, Some("Microsoft X-Box 360 Pad"));
             s.send(&create)?;
             s.gamepad = Some(g);
@@ -164,7 +185,9 @@ impl<T: TransportWrite> HidSession<T> {
     pub fn type_text(&mut self, s: &str) -> Result<()> {
         for ch in s.chars() {
             let mut mods = Modifiers::empty();
-            let Some(sc) = Scancode::try_from_char(ch, &mut mods) else { continue };
+            let Some(sc) = Scancode::try_from_char(ch, &mut mods) else {
+                continue;
+            };
             self.key(sc.to_u8(), true, mods)?;
             self.key(sc.to_u8(), false, mods)?;
         }
@@ -176,8 +199,9 @@ impl<T: TransportWrite> HidSession<T> {
     pub fn type_text_strict(&mut self, s: &str) -> Result<()> {
         for ch in s.chars() {
             let mut mods = Modifiers::empty();
-            let sc = Scancode::try_from_char(ch, &mut mods)
-                .ok_or(Error::SessionLifecycle("unsupported char in type_text_strict"))?;
+            let sc = Scancode::try_from_char(ch, &mut mods).ok_or(Error::SessionLifecycle(
+                "unsupported char in type_text_strict",
+            ))?;
             self.key(sc.to_u8(), true, mods)?;
             self.key(sc.to_u8(), false, mods)?;
         }
@@ -186,7 +210,10 @@ impl<T: TransportWrite> HidSession<T> {
 
     /// Inject a single key down (`pressed = true`) or up (`pressed = false`).
     pub fn key(&mut self, scancode: u8, pressed: bool, mods: Modifiers) -> Result<()> {
-        let kbd = self.kbd.as_mut().ok_or(Error::SessionLifecycle("keyboard not open"))?;
+        let kbd = self
+            .kbd
+            .as_mut()
+            .ok_or(Error::SessionLifecycle("keyboard not open"))?;
         let msg = kbd.key_event(scancode, pressed, mods)?;
         self.send(&msg)
     }
@@ -207,8 +234,13 @@ impl<T: TransportWrite> HidSession<T> {
     /// `dur` value is recorded for caller-visible timing — the session
     /// is synchronous and does not sleep between events (the caller is
     /// responsible for pacing if needed).
-    pub fn swipe(&mut self, from: (i32, i32), to: (i32, i32),
-                 _dur: Duration, steps: u32) -> Result<()> {
+    pub fn swipe(
+        &mut self,
+        from: (i32, i32),
+        to: (i32, i32),
+        _dur: Duration,
+        steps: u32,
+    ) -> Result<()> {
         let steps = steps.max(2);
         let (x0, y0) = from;
         let (x1, y1) = to;
@@ -227,7 +259,10 @@ impl<T: TransportWrite> HidSession<T> {
     /// Set a single gamepad stick/trigger axis to `value` in `[-1.0, 1.0]`
     /// (triggers are clamped to `[0, 1]`). Writes one `UHID_INPUT`.
     pub fn set_stick(&mut self, axis: GamepadAxis, value: f32) -> Result<()> {
-        let gp = self.gamepad.as_mut().ok_or(Error::SessionLifecycle("gamepad not open"))?;
+        let gp = self
+            .gamepad
+            .as_mut()
+            .ok_or(Error::SessionLifecycle("gamepad not open"))?;
         let raw = (value.clamp(-1.0, 1.0) * 32767.0) as i16;
         let msg = gp.axis_event(HID_ID_GAMEPAD_FIRST as u32, axis, raw)?;
         self.send(&msg)
@@ -235,7 +270,10 @@ impl<T: TransportWrite> HidSession<T> {
 
     /// Set a single gamepad button to `pressed`. Writes one `UHID_INPUT`.
     pub fn set_button(&mut self, btn: GamepadButton, pressed: bool) -> Result<()> {
-        let gp = self.gamepad.as_mut().ok_or(Error::SessionLifecycle("gamepad not open"))?;
+        let gp = self
+            .gamepad
+            .as_mut()
+            .ok_or(Error::SessionLifecycle("gamepad not open"))?;
         let msg = gp.button_event(HID_ID_GAMEPAD_FIRST as u32, btn, pressed)?;
         self.send(&msg)
     }
@@ -244,7 +282,9 @@ impl<T: TransportWrite> HidSession<T> {
     /// events not covered by the high-level helpers). Panics if the
     /// keyboard was not opened.
     pub fn keyboard(&mut self) -> &mut KeyboardHid {
-        self.kbd.as_mut().expect("keyboard requested but not opened")
+        self.kbd
+            .as_mut()
+            .expect("keyboard requested but not opened")
     }
     /// Access the underlying mouse driver. Panics if not opened.
     pub fn mouse(&mut self) -> &mut MouseHid {
@@ -252,7 +292,9 @@ impl<T: TransportWrite> HidSession<T> {
     }
     /// Access the underlying gamepad driver. Panics if not opened.
     pub fn gamepad(&mut self) -> &mut GamepadHid {
-        self.gamepad.as_mut().expect("gamepad requested but not opened")
+        self.gamepad
+            .as_mut()
+            .expect("gamepad requested but not opened")
     }
 
     /// Send a control message over the owned transport. When the
@@ -276,7 +318,11 @@ impl<T: TransportWrite> HidSession<T> {
     /// messages pushed, total bytes written, and pending bytes
     /// currently buffered.
     pub fn stats(&self) -> (u64, u64, usize) {
-        (self.transport.pushed(), self.transport.written(), self.transport.pending_bytes())
+        (
+            self.transport.pushed(),
+            self.transport.written(),
+            self.transport.pending_bytes(),
+        )
     }
 
     /// Consume the session, sending `UHID_DESTROY` for every device
@@ -291,7 +337,10 @@ impl<T: TransportWrite> HidSession<T> {
     /// called [`Self::close`] (or for letting the `Drop` impl run).
     /// Panics if the session is not yet closed.
     pub fn into_inner(self) -> T {
-        assert!(self.closed, "HidSession::into_inner called before close(); leak risk");
+        assert!(
+            self.closed,
+            "HidSession::into_inner called before close(); leak risk"
+        );
         // SAFETY: `closed == true` means `Drop` is a no-op. We move out
         // the coalescing-wrapped transport and `forget(self)` to
         // disable the destructor.
@@ -303,12 +352,16 @@ impl<T: TransportWrite> HidSession<T> {
     }
 
     /// `true` if the session is already closed (or close was called).
-    pub fn is_closed(&self) -> bool { self.closed }
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
 
     /// Send `UHID_DESTROY` for every device that is still open. Used by
     /// both [`Self::close`] and the panic-safe `Drop` impl.
     fn try_close_all(&mut self) -> Result<()> {
-        if self.closed { return Ok(()); }
+        if self.closed {
+            return Ok(());
+        }
         if let Some(k) = self.kbd.as_ref() {
             let msg = k.close_message()?;
             self.send(&msg)?;
@@ -329,8 +382,14 @@ impl<T: TransportWrite> HidSession<T> {
         Ok(())
     }
 
-    fn touch_msg(&self, action: u8, pointer_id: u64,
-                 x: i32, y: i32, pressure: f32) -> ControlMessage {
+    fn touch_msg(
+        &self,
+        action: u8,
+        pointer_id: u64,
+        x: i32,
+        y: i32,
+        pressure: f32,
+    ) -> ControlMessage {
         ControlMessage::InjectTouchEvent(InjectTouchEvent {
             action,
             pointer_id,
@@ -351,10 +410,11 @@ impl<T: TransportWrite> Drop for HidSession<T> {
     /// swallowed (logged to stderr) so we never abort the process by
     /// double-panicking.
     fn drop(&mut self) {
-        if self.closed { return; }
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.try_close_all()
-        }));
+        if self.closed {
+            return;
+        }
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.try_close_all()));
         if let Err(panic) = result {
             eprintln!("HidSession::drop: close failed during unwind: {:?}", panic);
         }

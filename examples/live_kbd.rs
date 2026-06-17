@@ -12,12 +12,12 @@
 //! limitation, not a library bug — the bytes we send are byte-for-byte
 //! identical to scrcpy's, as verified by the unit + integration tests.
 
-use std::io::Read;
-use std::time::Duration;
 use android_hid_connect::control::message::{ControlMessage, GetClipboard, SetClipboard};
 use android_hid_connect::transport::{open_tcp, send_one};
 use android_hid_connect::types::Modifiers;
 use android_hid_connect::{HidDevice, KeyboardHid};
+use std::io::Read;
+use std::time::Duration;
 
 const DEVICE_NAME_FIELD_LENGTH: usize = 64;
 
@@ -31,7 +31,9 @@ fn read_device_msg(stream: &mut std::net::TcpStream) -> std::io::Result<(u8, Vec
     stream.read_exact(&mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
     let mut payload = vec![0u8; len];
-    if len > 0 { stream.read_exact(&mut payload)?; }
+    if len > 0 {
+        stream.read_exact(&mut payload)?;
+    }
     Ok((ty, payload))
 }
 
@@ -43,7 +45,10 @@ fn main() -> std::process::ExitCode {
     println!("== live kbd+clipboard test (port {port}) ==");
     let mut stream = match open_tcp("127.0.0.1", port) {
         Ok(s) => s,
-        Err(e) => { eprintln!("connect: {e}"); return std::process::ExitCode::from(2); }
+        Err(e) => {
+            eprintln!("connect: {e}");
+            return std::process::ExitCode::from(2);
+        }
     };
     stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(3))).ok();
@@ -59,7 +64,10 @@ fn main() -> std::process::ExitCode {
     //    frame.
     let mut device_meta = vec![0u8; DEVICE_NAME_FIELD_LENGTH];
     stream.read_exact(&mut device_meta).unwrap();
-    let name_len = device_meta.iter().position(|&b| b == 0).unwrap_or(DEVICE_NAME_FIELD_LENGTH);
+    let name_len = device_meta
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(DEVICE_NAME_FIELD_LENGTH);
     let name = String::from_utf8_lossy(&device_meta[..name_len]).to_string();
     println!("device meta ({name_len} bytes): {name}");
 
@@ -90,40 +98,51 @@ fn main() -> std::process::ExitCode {
     for ch in "Hello".chars() {
         let mut mods = Modifiers::empty();
         let sc = match ch {
-            'H' => { mods = Modifiers::LSHIFT; 0x0B }
+            'H' => {
+                mods = Modifiers::LSHIFT;
+                0x0B
+            }
             'e' => 0x08,
             'l' => 0x0C,
             'o' => 0x12,
             _ => continue,
         };
         send_one(&mut stream, &kbd.key_event(sc, true, mods).unwrap()).unwrap();
-        send_one(&mut stream, &kbd.key_event(sc, false, Modifiers::empty()).unwrap()).unwrap();
+        send_one(
+            &mut stream,
+            &kbd.key_event(sc, false, Modifiers::empty()).unwrap(),
+        )
+        .unwrap();
     }
     send_one(&mut stream, &kbd.close_message().unwrap()).unwrap();
     println!("UHID_DESTROY keyboard: written");
 
     // 5) drain remaining DEVICE_MSG frames for ~3s
     let mut drained = 0;
-    stream.set_read_timeout(Some(Duration::from_millis(500))).ok();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok();
     while let Ok((ty, payload)) = read_device_msg(&mut stream) {
         let s = String::from_utf8_lossy(&payload);
         match ty {
             1 => {
                 let seq = if payload.len() >= 8 {
                     u64::from_be_bytes(payload[..8].try_into().unwrap())
-                } else { 0 };
+                } else {
+                    0
+                };
                 println!("drained ACK_CLIPBOARD seq={seq}");
             }
             2 => {
-                let id = u16::from_be_bytes(payload[..2].try_into().unwrap_or([0,0]));
+                let id = u16::from_be_bytes(payload[..2].try_into().unwrap_or([0, 0]));
                 println!("drained UHID_OUTPUT id={id} data={:02x?}", &payload[4..]);
             }
             _ => println!("drained DEVICE_MSG type={ty} payload={s:?}"),
         }
         drained += 1;
-        if drained > 16 { break; }
+        if drained > 16 {
+            break;
+        }
     }
     std::process::ExitCode::SUCCESS
 }
-
-

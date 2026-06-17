@@ -66,8 +66,7 @@ pub trait TransportWrite {
 /// `Vec<u8>`, etc. without wrapping.
 impl<T: std::io::Write> TransportWrite for T {
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        std::io::Write::write_all(self, buf)
-            .map_err(|e| Error::Transport(format!("{e}")))
+        std::io::Write::write_all(self, buf).map_err(|e| Error::Transport(format!("{e}")))
     }
 
     fn flush(&mut self) -> Result<()> {

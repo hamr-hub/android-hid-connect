@@ -46,28 +46,28 @@ pub const INJECT_TEXT_MAX_LENGTH: usize = 300;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ControlMsgType {
-    InjectKeycode      = 0,
-    InjectText         = 1,
-    InjectTouchEvent   = 2,
-    InjectScrollEvent  = 3,
-    BackOrScreenOn     = 4,
+    InjectKeycode = 0,
+    InjectText = 1,
+    InjectTouchEvent = 2,
+    InjectScrollEvent = 3,
+    BackOrScreenOn = 4,
     ExpandNotification = 5,
-    ExpandSettings     = 6,
-    CollapsePanels     = 7,
-    GetClipboard       = 8,
-    SetClipboard       = 9,
-    SetDisplayPower    = 10,
-    RotateDevice       = 11,
-    UhidCreate         = 12,
-    UhidInput          = 13,
-    UhidDestroy        = 14,
+    ExpandSettings = 6,
+    CollapsePanels = 7,
+    GetClipboard = 8,
+    SetClipboard = 9,
+    SetDisplayPower = 10,
+    RotateDevice = 11,
+    UhidCreate = 12,
+    UhidInput = 13,
+    UhidDestroy = 14,
     OpenHardKbSettings = 15,
-    StartApp           = 16,
-    ResetVideo         = 17,
-    CameraSetTorch     = 18,
-    CameraZoomIn       = 19,
-    CameraZoomOut      = 20,
-    ResizeDisplay      = 21,
+    StartApp = 16,
+    ResetVideo = 17,
+    CameraSetTorch = 18,
+    CameraZoomIn = 19,
+    CameraZoomOut = 20,
+    ResizeDisplay = 21,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,8 +93,8 @@ pub struct UhidDestroy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InjectKeycode {
-    pub action: u8,    // AKEY_EVENT_ACTION_DOWN / UP
-    pub keycode: u32,  // AKEYCODE_*
+    pub action: u8,   // AKEY_EVENT_ACTION_DOWN / UP
+    pub keycode: u32, // AKEYCODE_*
     pub repeat: u32,
     pub metastate: u32,
 }
@@ -198,28 +198,28 @@ impl ControlMessage {
     /// Type tag of this message.
     pub fn msg_type(&self) -> ControlMsgType {
         match self {
-            Self::InjectKeycode(_)        => ControlMsgType::InjectKeycode,
-            Self::InjectText(_)           => ControlMsgType::InjectText,
-            Self::InjectTouchEvent(_)     => ControlMsgType::InjectTouchEvent,
-            Self::InjectScrollEvent(_)    => ControlMsgType::InjectScrollEvent,
-            Self::BackOrScreenOn(_)       => ControlMsgType::BackOrScreenOn,
+            Self::InjectKeycode(_) => ControlMsgType::InjectKeycode,
+            Self::InjectText(_) => ControlMsgType::InjectText,
+            Self::InjectTouchEvent(_) => ControlMsgType::InjectTouchEvent,
+            Self::InjectScrollEvent(_) => ControlMsgType::InjectScrollEvent,
+            Self::BackOrScreenOn(_) => ControlMsgType::BackOrScreenOn,
             Self::ExpandNotificationPanel => ControlMsgType::ExpandNotification,
-            Self::ExpandSettingsPanel     => ControlMsgType::ExpandSettings,
-            Self::CollapsePanels          => ControlMsgType::CollapsePanels,
-            Self::GetClipboard(_)         => ControlMsgType::GetClipboard,
-            Self::SetClipboard(_)         => ControlMsgType::SetClipboard,
-            Self::SetDisplayPower(_)      => ControlMsgType::SetDisplayPower,
-            Self::RotateDevice            => ControlMsgType::RotateDevice,
-            Self::UhidCreate(_)           => ControlMsgType::UhidCreate,
-            Self::UhidInput(_)            => ControlMsgType::UhidInput,
-            Self::UhidDestroy(_)          => ControlMsgType::UhidDestroy,
+            Self::ExpandSettingsPanel => ControlMsgType::ExpandSettings,
+            Self::CollapsePanels => ControlMsgType::CollapsePanels,
+            Self::GetClipboard(_) => ControlMsgType::GetClipboard,
+            Self::SetClipboard(_) => ControlMsgType::SetClipboard,
+            Self::SetDisplayPower(_) => ControlMsgType::SetDisplayPower,
+            Self::RotateDevice => ControlMsgType::RotateDevice,
+            Self::UhidCreate(_) => ControlMsgType::UhidCreate,
+            Self::UhidInput(_) => ControlMsgType::UhidInput,
+            Self::UhidDestroy(_) => ControlMsgType::UhidDestroy,
             Self::OpenHardKeyboardSettings => ControlMsgType::OpenHardKbSettings,
-            Self::StartApp(_)             => ControlMsgType::StartApp,
-            Self::ResetVideo              => ControlMsgType::ResetVideo,
-            Self::CameraSetTorch(_)       => ControlMsgType::CameraSetTorch,
-            Self::CameraZoomIn            => ControlMsgType::CameraZoomIn,
-            Self::CameraZoomOut           => ControlMsgType::CameraZoomOut,
-            Self::ResizeDisplay(_)        => ControlMsgType::ResizeDisplay,
+            Self::StartApp(_) => ControlMsgType::StartApp,
+            Self::ResetVideo => ControlMsgType::ResetVideo,
+            Self::CameraSetTorch(_) => ControlMsgType::CameraSetTorch,
+            Self::CameraZoomIn => ControlMsgType::CameraZoomIn,
+            Self::CameraZoomOut => ControlMsgType::CameraZoomOut,
+            Self::ResizeDisplay(_) => ControlMsgType::ResizeDisplay,
         }
     }
 
@@ -244,18 +244,26 @@ impl ControlMessage {
         buf.push(self.msg_type() as u8);
         match self {
             Self::UhidCreate(c) => serialize_uhid_create(c, buf)?,
-            Self::UhidInput(i)  => serialize_uhid_input(i, buf)?,
+            Self::UhidInput(i) => serialize_uhid_input(i, buf)?,
             Self::UhidDestroy(d) => serialize_uhid_destroy(d, buf),
             Self::InjectKeycode(k) => serialize_inject_keycode(k, buf),
             Self::InjectText(t) => serialize_inject_text(t, buf),
             Self::InjectTouchEvent(t) => serialize_inject_touch(t, buf),
             Self::InjectScrollEvent(s) => serialize_inject_scroll(s, buf),
-            Self::BackOrScreenOn(b) => { buf.push(b.action); }
-            Self::GetClipboard(g) => { buf.push(g.copy_key); }
+            Self::BackOrScreenOn(b) => {
+                buf.push(b.action);
+            }
+            Self::GetClipboard(g) => {
+                buf.push(g.copy_key);
+            }
             Self::SetClipboard(s) => serialize_set_clipboard(s, buf),
-            Self::SetDisplayPower(s) => { buf.push(s.on as u8); }
+            Self::SetDisplayPower(s) => {
+                buf.push(s.on as u8);
+            }
             Self::StartApp(s) => serialize_start_app(s, buf)?,
-            Self::CameraSetTorch(t) => { buf.push(t.on as u8); }
+            Self::CameraSetTorch(t) => {
+                buf.push(t.on as u8);
+            }
             Self::ResizeDisplay(r) => {
                 buf.extend_from_slice(&r.width.to_be_bytes());
                 buf.extend_from_slice(&r.height.to_be_bytes());
@@ -280,9 +288,15 @@ impl ControlMessage {
     }
 }
 
-fn write_u16_be(buf: &mut Vec<u8>, v: u16) { buf.extend_from_slice(&v.to_be_bytes()); }
-fn write_u32_be(buf: &mut Vec<u8>, v: u32) { buf.extend_from_slice(&v.to_be_bytes()); }
-fn write_u64_be(buf: &mut Vec<u8>, v: u64) { buf.extend_from_slice(&v.to_be_bytes()); }
+fn write_u16_be(buf: &mut Vec<u8>, v: u16) {
+    buf.extend_from_slice(&v.to_be_bytes());
+}
+fn write_u32_be(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_be_bytes());
+}
+fn write_u64_be(buf: &mut Vec<u8>, v: u64) {
+    buf.extend_from_slice(&v.to_be_bytes());
+}
 
 fn write_tiny_string(buf: &mut Vec<u8>, s: &str, max_len: usize) -> Result<()> {
     assert!(max_len <= 0xFF);
@@ -314,10 +328,14 @@ fn serialize_uhid_create(c: &UhidCreate, buf: &mut Vec<u8>) -> Result<()> {
     write_u16_be(buf, c.product_id);
     match &c.name {
         Some(n) => write_tiny_string(buf, n, 127)?,
-        None => { buf.push(0); }
+        None => {
+            buf.push(0);
+        }
     }
     if c.report_desc.len() > u16::MAX as usize {
-        return Err(Error::ReportDescTooLong { size: c.report_desc.len() });
+        return Err(Error::ReportDescTooLong {
+            size: c.report_desc.len(),
+        });
     }
     write_u16_be(buf, c.report_desc.len() as u16);
     buf.extend_from_slice(&c.report_desc);
@@ -382,7 +400,11 @@ fn serialize_set_clipboard(s: &SetClipboard, buf: &mut Vec<u8>) {
     write_u64_be(buf, s.sequence);
     buf.push(s.paste as u8);
     let max = CONTROL_MSG_MAX_SIZE - 14;
-    let truncated = if s.text.len() > max { &s.text[..max] } else { &s.text[..] };
+    let truncated = if s.text.len() > max {
+        &s.text[..max]
+    } else {
+        &s.text[..]
+    };
     write_string(buf, truncated);
 }
 
@@ -407,7 +429,9 @@ mod tests {
     #[test]
     fn uhid_create_serialize_layout() {
         let msg = ControlMessage::UhidCreate(UhidCreate {
-            id: 1, vendor_id: 0x045e, product_id: 0x028e,
+            id: 1,
+            vendor_id: 0x045e,
+            product_id: 0x028e,
             name: Some("Pad".to_string()),
             report_desc: vec![0x05, 0x01, 0x09, 0x06],
         });
@@ -427,9 +451,13 @@ mod tests {
     #[test]
     fn uhid_input_serialize_layout() {
         let mut data = [0u8; HID_MAX_SIZE];
-        data[0] = 0x02; data[1] = 0x00; data[2] = 0x04; // LSHIFT + A
+        data[0] = 0x02;
+        data[1] = 0x00;
+        data[2] = 0x04; // LSHIFT + A
         let msg = ControlMessage::UhidInput(UhidInput {
-            id: 1, size: 8, data,
+            id: 1,
+            size: 8,
+            data,
         });
         let v = msg.serialize().unwrap();
         // type(1) | id(2) | size(2) | data(8) = 13
@@ -450,21 +478,33 @@ mod tests {
     #[test]
     fn critical_flag_matches_scrcpy() {
         assert!(ControlMessage::UhidCreate(UhidCreate {
-            id: 1, vendor_id: 0, product_id: 0, name: None, report_desc: vec![],
-        }).is_critical());
+            id: 1,
+            vendor_id: 0,
+            product_id: 0,
+            name: None,
+            report_desc: vec![],
+        })
+        .is_critical());
         assert!(ControlMessage::UhidDestroy(UhidDestroy { id: 1 }).is_critical());
         assert!(!ControlMessage::UhidInput(UhidInput {
-            id: 1, size: 0, data: [0; HID_MAX_SIZE],
-        }).is_critical());
+            id: 1,
+            size: 0,
+            data: [0; HID_MAX_SIZE],
+        })
+        .is_critical());
     }
 
     #[test]
     fn name_too_long_rejected() {
         let s = "a".repeat(128);
         let r = ControlMessage::UhidCreate(UhidCreate {
-            id: 1, vendor_id: 0, product_id: 0,
-            name: Some(s), report_desc: vec![],
-        }).serialize();
+            id: 1,
+            vendor_id: 0,
+            product_id: 0,
+            name: Some(s),
+            report_desc: vec![],
+        })
+        .serialize();
         assert!(matches!(r, Err(Error::NameTooLong { size: 128 })));
     }
 
@@ -488,7 +528,10 @@ mod tests {
     #[test]
     fn inject_keycode_layout() {
         let msg = ControlMessage::InjectKeycode(InjectKeycode {
-            action: 0, keycode: 29, repeat: 0, metastate: 0,
+            action: 0,
+            keycode: 29,
+            repeat: 0,
+            metastate: 0,
         });
         let v = msg.serialize().unwrap();
         // type(1) + action(1) + keycode(4) + repeat(4) + metastate(4) = 14
@@ -502,8 +545,13 @@ mod tests {
     fn inject_scroll_normalises_clamped() {
         // hscroll=200 (raw 200/16 = 12.5 → clamp to 1.0 → 0x7FFF)
         let msg = ControlMessage::InjectScrollEvent(InjectScrollEvent {
-            x: 0, y: 0, screen_w: 1080, screen_h: 1920,
-            hscroll: 200.0, vscroll: 0.0, buttons: 0,
+            x: 0,
+            y: 0,
+            screen_w: 1080,
+            screen_h: 1920,
+            hscroll: 200.0,
+            vscroll: 0.0,
+            buttons: 0,
         });
         let v = msg.serialize().unwrap();
         // type(1) + position(12) + hscroll(2) + vscroll(2) + buttons(4) = 21

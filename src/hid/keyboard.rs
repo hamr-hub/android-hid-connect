@@ -18,23 +18,21 @@ use crate::control::message::{ControlMessage, UhidCreate, UhidDestroy, UhidInput
 use crate::error::{Error, Result};
 use crate::hid::descriptor::KEYBOARD_REPORT_DESC;
 use crate::hid::{HidDevice, HidReport};
-use crate::types::{
-    Modifiers, HID_ID_KEYBOARD, HID_MAX_SIZE,
-};
+use crate::types::{Modifiers, HID_ID_KEYBOARD, HID_MAX_SIZE};
 
 /// Number of non-modifier scancode slots in a keyboard report.
 const KEYBOARD_REPORT_SIZE: usize = 8;
 const KEYBOARD_MAX_KEYS: usize = 6;
 
 /// Bit-position offsets of the modifier keys in the modifier byte.
-const SC_HID_MOD_LCTRL:  u8 = 1 << 0;
+const SC_HID_MOD_LCTRL: u8 = 1 << 0;
 const SC_HID_MOD_LSHIFT: u8 = 1 << 1;
-const SC_HID_MOD_LALT:   u8 = 1 << 2;
-const SC_HID_MOD_LGUI:   u8 = 1 << 3;
-const SC_HID_MOD_RCTRL:  u8 = 1 << 4;
+const SC_HID_MOD_LALT: u8 = 1 << 2;
+const SC_HID_MOD_LGUI: u8 = 1 << 3;
+const SC_HID_MOD_RCTRL: u8 = 1 << 4;
 const SC_HID_MOD_RSHIFT: u8 = 1 << 5;
-const SC_HID_MOD_RALT:   u8 = 1 << 6;
-const SC_HID_MOD_RGUI:   u8 = 1 << 7;
+const SC_HID_MOD_RALT: u8 = 1 << 6;
+const SC_HID_MOD_RGUI: u8 = 1 << 7;
 
 /// USB HID ErrorRollOver code used in the phantom-state slots.
 const SC_HID_ERROR_ROLL_OVER: u8 = 0x01;
@@ -67,7 +65,9 @@ pub struct KeyboardHid {
 }
 
 impl Default for KeyboardHid {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl KeyboardHid {
@@ -111,7 +111,9 @@ impl KeyboardHid {
     }
 
     /// Snapshot of the modifier byte the device last reported.
-    pub fn modifiers(&self) -> Modifiers { self.device_mod }
+    pub fn modifiers(&self) -> Modifiers {
+        self.device_mod
+    }
 
     /// Build an 8-byte input report representing the current keyboard
     /// state, using the supplied modifier bitmap. (The caller is expected
@@ -122,10 +124,14 @@ impl KeyboardHid {
         // data[1] is reserved, stays 0.
         let mut slot: usize = 0;
         for (sc, &held) in self.keys.iter().enumerate() {
-            if !held { continue; }
+            if !held {
+                continue;
+            }
             if slot >= KEYBOARD_MAX_KEYS {
                 // Phantom state: fill every key slot with ErrorRollOver.
-                for b in &mut data[2..] { *b = SC_HID_ERROR_ROLL_OVER; }
+                for b in &mut data[2..] {
+                    *b = SC_HID_ERROR_ROLL_OVER;
+                }
                 return HidReport::new(HID_ID_KEYBOARD, data.to_vec());
             }
             data[2 + slot] = sc as u8;
@@ -137,8 +143,12 @@ impl KeyboardHid {
     /// Build a report from a single scancode event, automatically
     /// mutating internal state. Returns `Err` for out-of-range scancodes
     /// (the event is dropped).
-    pub fn inject_key(&mut self, scancode: u8, pressed: bool,
-                      modifiers: Modifiers) -> Result<HidReport> {
+    pub fn inject_key(
+        &mut self,
+        scancode: u8,
+        pressed: bool,
+        modifiers: Modifiers,
+    ) -> Result<HidReport> {
         self.set_key(scancode, pressed)?;
         self.device_mod = modifiers;
         Ok(self.build_report(modifiers))
@@ -159,8 +169,12 @@ impl KeyboardHid {
 
     /// Construct a UHID_INPUT from a raw scancode event. Convenience that
     /// combines `inject_key` + `to_input_message`.
-    pub fn key_event(&mut self, scancode: u8, pressed: bool,
-                     modifiers: Modifiers) -> Result<ControlMessage> {
+    pub fn key_event(
+        &mut self,
+        scancode: u8,
+        pressed: bool,
+        modifiers: Modifiers,
+    ) -> Result<ControlMessage> {
         let report = self.inject_key(scancode, pressed, modifiers)?;
         Ok(self.to_input_message(&report))
     }
@@ -205,7 +219,9 @@ impl KeyboardHid {
 }
 
 impl HidDevice for KeyboardHid {
-    fn hid_id(&self) -> u16 { HID_ID_KEYBOARD }
+    fn hid_id(&self) -> u16 {
+        HID_ID_KEYBOARD
+    }
 
     fn open_message(&self, _name: Option<&str>) -> Result<ControlMessage> {
         // scrcpy's keyboard UHID_CREATE uses vendor/product 0 and a null
@@ -222,7 +238,9 @@ impl HidDevice for KeyboardHid {
     }
 
     fn close_message(&self) -> Result<ControlMessage> {
-        Ok(ControlMessage::UhidDestroy(UhidDestroy { id: HID_ID_KEYBOARD }))
+        Ok(ControlMessage::UhidDestroy(UhidDestroy {
+            id: HID_ID_KEYBOARD,
+        }))
     }
 }
 
@@ -230,14 +248,30 @@ impl HidDevice for KeyboardHid {
 fn hid_mod_from_sdl_keymod(m: u16) -> u8 {
     // Replicates `sc_hid_mod_from_sdl_keymod` from scrcpy.
     let mut mods = 0u8;
-    if m & 0x0001 != 0 { mods |= SC_HID_MOD_LCTRL; }
-    if m & 0x0002 != 0 { mods |= SC_HID_MOD_LSHIFT; }
-    if m & 0x0004 != 0 { mods |= SC_HID_MOD_LALT; }
-    if m & 0x0008 != 0 { mods |= SC_HID_MOD_LGUI; }
-    if m & 0x0010 != 0 { mods |= SC_HID_MOD_RCTRL; }
-    if m & 0x0020 != 0 { mods |= SC_HID_MOD_RSHIFT; }
-    if m & 0x0040 != 0 { mods |= SC_HID_MOD_RALT; }
-    if m & 0x0080 != 0 { mods |= SC_HID_MOD_RGUI; }
+    if m & 0x0001 != 0 {
+        mods |= SC_HID_MOD_LCTRL;
+    }
+    if m & 0x0002 != 0 {
+        mods |= SC_HID_MOD_LSHIFT;
+    }
+    if m & 0x0004 != 0 {
+        mods |= SC_HID_MOD_LALT;
+    }
+    if m & 0x0008 != 0 {
+        mods |= SC_HID_MOD_LGUI;
+    }
+    if m & 0x0010 != 0 {
+        mods |= SC_HID_MOD_RCTRL;
+    }
+    if m & 0x0020 != 0 {
+        mods |= SC_HID_MOD_RSHIFT;
+    }
+    if m & 0x0040 != 0 {
+        mods |= SC_HID_MOD_RALT;
+    }
+    if m & 0x0080 != 0 {
+        mods |= SC_HID_MOD_RGUI;
+    }
     mods
 }
 
@@ -267,10 +301,7 @@ mod tests {
         // First 6 slots become scancodes 0x04..=0x09; slot 6 (= 7th
         // key) overflows the array, but we trigger the phantom fill at
         // the boundary, so the entire 6-slot region becomes ErrorRollOver.
-        assert_eq!(
-            r.data,
-            vec![0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01]
-        );
+        assert_eq!(r.data, vec![0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01]);
     }
 
     #[test]

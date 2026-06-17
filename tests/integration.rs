@@ -6,9 +6,7 @@ use std::io::Read;
 use std::net::Shutdown;
 use std::thread;
 
-use android_hid_connect::control::message::{
-    ControlMessage, UhidCreate, UhidDestroy, UhidInput,
-};
+use android_hid_connect::control::message::{ControlMessage, UhidCreate, UhidDestroy, UhidInput};
 use android_hid_connect::transport::{send_batch, send_one, MockTransport};
 use android_hid_connect::types::{GamepadAxis, GamepadButton, Modifiers, MouseButton};
 use android_hid_connect::{GamepadHid, HidDevice, KeyboardHid, MouseHid};
@@ -19,7 +17,9 @@ fn read_exact(stream: &mut std::net::TcpStream, n: usize) -> Vec<u8> {
     while out.len() < n {
         let mut buf = [0u8; 256];
         let k = stream.read(&mut buf).expect("read");
-        if k == 0 { break; }
+        if k == 0 {
+            break;
+        }
         out.extend_from_slice(&buf[..k]);
     }
     out
@@ -192,7 +192,11 @@ fn dpad_hat_in_byte_14() {
 fn name_too_long_rejected() {
     let s = "a".repeat(128);
     let msg = ControlMessage::UhidCreate(UhidCreate {
-        id: 1, vendor_id: 0, product_id: 0, name: Some(s), report_desc: vec![],
+        id: 1,
+        vendor_id: 0,
+        product_id: 0,
+        name: Some(s),
+        report_desc: vec![],
     });
     let r = msg.serialize();
     assert!(r.is_err());
@@ -202,10 +206,16 @@ fn name_too_long_rejected() {
 fn droppable_vs_critical() {
     // UHID_INPUT and friends are droppable; UHID_CREATE/DESTROY are not.
     let input = ControlMessage::UhidInput(UhidInput {
-        id: 1, size: 0, data: [0; 15],
+        id: 1,
+        size: 0,
+        data: [0; 15],
     });
     let create = ControlMessage::UhidCreate(UhidCreate {
-        id: 1, vendor_id: 0, product_id: 0, name: None, report_desc: vec![],
+        id: 1,
+        vendor_id: 0,
+        product_id: 0,
+        name: None,
+        report_desc: vec![],
     });
     let destroy = ControlMessage::UhidDestroy(UhidDestroy { id: 1 });
     assert!(!input.is_critical());
@@ -236,8 +246,12 @@ fn phantom_state_on_overflow() {
     assert_eq!(size, 8);
     let data_start = input_off + 5;
     for i in 0..6 {
-        assert_eq!(bytes[data_start + 2 + i], 0x01,
+        assert_eq!(
+            bytes[data_start + 2 + i],
+            0x01,
             "slot {} should be ErrorRollOver, got {:#x}",
-            i, bytes[data_start + 2 + i]);
+            i,
+            bytes[data_start + 2 + i]
+        );
     }
 }

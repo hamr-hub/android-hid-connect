@@ -26,11 +26,11 @@ const MOUSE_REPORT_SIZE: usize = 5;
 
 /// Mouse button bit positions in byte 0 of the report. Values match
 /// `sc_hid_buttons_from_buttons_state` in scrcpy.
-const BTN_LEFT:   u8 = 1 << 0;
-const BTN_RIGHT:  u8 = 1 << 1;
+const BTN_LEFT: u8 = 1 << 0;
+const BTN_RIGHT: u8 = 1 << 1;
 const BTN_MIDDLE: u8 = 1 << 2;
-const BTN_X1:     u8 = 1 << 3;
-const BTN_X2:     u8 = 1 << 4;
+const BTN_X1: u8 = 1 << 3;
+const BTN_X2: u8 = 1 << 4;
 
 /// Pack a `sc_mouse_button`-style bitmap into byte 0 of the report.
 fn buttons_byte(buttons_state: u8) -> u8 {
@@ -44,11 +44,21 @@ fn buttons_byte(buttons_state: u8) -> u8 {
     // Because the input `buttons_state` is already a `u8` bitmask at
     // these bit positions, we can copy the 5 low bits directly.
     let mut c = 0u8;
-    if buttons_state & BTN_LEFT   != 0 { c |= BTN_LEFT; }
-    if buttons_state & BTN_RIGHT  != 0 { c |= BTN_RIGHT; }
-    if buttons_state & BTN_MIDDLE != 0 { c |= BTN_MIDDLE; }
-    if buttons_state & BTN_X1     != 0 { c |= BTN_X1; }
-    if buttons_state & BTN_X2     != 0 { c |= BTN_X2; }
+    if buttons_state & BTN_LEFT != 0 {
+        c |= BTN_LEFT;
+    }
+    if buttons_state & BTN_RIGHT != 0 {
+        c |= BTN_RIGHT;
+    }
+    if buttons_state & BTN_MIDDLE != 0 {
+        c |= BTN_MIDDLE;
+    }
+    if buttons_state & BTN_X1 != 0 {
+        c |= BTN_X1;
+    }
+    if buttons_state & BTN_X2 != 0 {
+        c |= BTN_X2;
+    }
     c
 }
 
@@ -56,7 +66,13 @@ fn buttons_byte(buttons_state: u8) -> u8 {
 /// relative motion fields in the HID report.
 #[inline]
 fn clamp_i8(v: i32) -> i8 {
-    if v < -127 { -127 } else if v > 127 { 127 } else { v as i8 }
+    if v < -127 {
+        -127
+    } else if v > 127 {
+        127
+    } else {
+        v as i8
+    }
 }
 
 /// Consume the integer portion of a float, leaving the fractional part
@@ -79,7 +95,9 @@ pub struct MouseHid {
 }
 
 impl Default for MouseHid {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MouseHid {
@@ -94,8 +112,7 @@ impl MouseHid {
     ///
     /// `buttons_state` is a bitwise-OR of [`crate::types::MouseButton`]
     /// values.
-    pub fn generate_input_from_motion(&self, xrel: i32, yrel: i32,
-                                       buttons_state: u8) -> HidReport {
+    pub fn generate_input_from_motion(&self, xrel: i32, yrel: i32, buttons_state: u8) -> HidReport {
         let mut data = [0u8; MOUSE_REPORT_SIZE];
         data[0] = buttons_byte(buttons_state);
         data[1] = clamp_i8(xrel) as u8;
@@ -115,14 +132,14 @@ impl MouseHid {
     /// Convert a scroll event into a 5-byte input report, accumulating
     /// fractional deltas. Returns `None` if neither axis has accumulated
     /// at least ±1 since the last emitted report.
-    pub fn generate_input_from_scroll(&mut self, hscroll: f32, vscroll: f32)
-        -> Option<HidReport>
-    {
+    pub fn generate_input_from_scroll(&mut self, hscroll: f32, vscroll: f32) -> Option<HidReport> {
         self.residual_hscroll += hscroll;
         self.residual_vscroll += vscroll;
         let h = consume_scroll_integer(&mut self.residual_hscroll);
         let v = consume_scroll_integer(&mut self.residual_vscroll);
-        if h == 0 && v == 0 { return None; }
+        if h == 0 && v == 0 {
+            return None;
+        }
 
         let mut data = [0u8; MOUSE_REPORT_SIZE];
         data[0] = 0;
@@ -139,8 +156,7 @@ impl MouseHid {
         self.to_input_message(&report)
     }
 
-    pub fn motion_message(&self, xrel: i32, yrel: i32,
-                          buttons_state: u8) -> ControlMessage {
+    pub fn motion_message(&self, xrel: i32, yrel: i32, buttons_state: u8) -> ControlMessage {
         let report = self.generate_input_from_motion(xrel, yrel, buttons_state);
         self.to_input_message(&report)
     }
@@ -160,7 +176,9 @@ impl MouseHid {
 }
 
 impl HidDevice for MouseHid {
-    fn hid_id(&self) -> u16 { HID_ID_MOUSE }
+    fn hid_id(&self) -> u16 {
+        HID_ID_MOUSE
+    }
 
     fn open_message(&self, _name: Option<&str>) -> Result<ControlMessage> {
         Ok(ControlMessage::UhidCreate(UhidCreate {
@@ -173,7 +191,9 @@ impl HidDevice for MouseHid {
     }
 
     fn close_message(&self) -> Result<ControlMessage> {
-        Ok(ControlMessage::UhidDestroy(UhidDestroy { id: HID_ID_MOUSE }))
+        Ok(ControlMessage::UhidDestroy(UhidDestroy {
+            id: HID_ID_MOUSE,
+        }))
     }
 }
 
@@ -200,8 +220,7 @@ mod tests {
     #[test]
     fn click_carries_button_state() {
         let m = MouseHid::new();
-        let r = m.generate_input_from_click(
-            MouseButton::state(&[MouseButton::Left]));
+        let r = m.generate_input_from_click(MouseButton::state(&[MouseButton::Left]));
         assert_eq!(r.data, vec![0x01, 0x00, 0x00, 0x00, 0x00]);
     }
 
@@ -218,7 +237,7 @@ mod tests {
         let r = m.generate_input_from_scroll(2.7, -1.3).unwrap();
         // v = -1, h = 2 (truncation toward zero)
         assert_eq!(r.data[3] as i8, -1);
-        assert_eq!(r.data[4] as i8,  2);
+        assert_eq!(r.data[4] as i8, 2);
         // residual kept for next event
         assert!((m.residual_hscroll - 0.7).abs() < 1e-6);
         assert!((m.residual_vscroll + 0.3).abs() < 1e-6);

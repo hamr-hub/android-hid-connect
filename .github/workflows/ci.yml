@@ -12,26 +12,41 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: cargo test (ubuntu-latest / stable)
+  # Fast feedback on every push: fmt + clippy + test on Linux.
+  linux:
+    name: linux / stable
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo build --all-targets
+      - run: cargo test --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
 
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
+  # Cross-platform test matrix (stable only, skip clippy to save time).
+  test:
+    name: test (${{ matrix.os }} / stable)
+    needs: linux
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --all-targets
+      - run: cargo test --all-targets
 
-      - name: Cache cargo registry & target
-        uses: Swatinem/rust-cache@v2
-
-      - name: cargo build
-        run: cargo build --all-targets
-
-      - name: cargo test
-        run: cargo test --all-targets
-
-      - name: cargo fmt --check
-        run: cargo fmt --all -- --check
-
-      - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+  # MSRV: pin to a conservative 1.70 (older than any toolchain we test).
+  msrv:
+    name: MSRV (1.70 / ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.70
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --all-targets

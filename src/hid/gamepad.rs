@@ -113,9 +113,10 @@ impl GamepadHid {
             // also does not fail in this case, but we re-use the same
             // slot to keep things idempotent.
             let idx = self.find_slot(gamepad_id).unwrap();
-            return Ok((Self::slot_hid_id(idx), self.build_create(name)?));
+            return Ok((Self::slot_hid_id(idx), self.build_create(Self::slot_hid_id(idx), name)?));
         }
         let slot_idx = self.free_slot().ok_or(Error::NoGamepadSlot)?;
+        let hid_id = Self::slot_hid_id(slot_idx);
         let slot = GamepadSlot {
             gamepad_id,
             buttons: SLOT_FREE_BUTTONS,
@@ -127,7 +128,7 @@ impl GamepadHid {
             axis_right_trigger: 0,
         };
         self.slots[slot_idx] = slot;
-        Ok((Self::slot_hid_id(slot_idx), self.build_create(name)?))
+        Ok((hid_id, self.build_create(hid_id, name)?))
     }
 
     /// Release the slot bound to `gamepad_id`.
@@ -143,10 +144,10 @@ impl GamepadHid {
         }))
     }
 
-    fn build_create(&self, name: Option<&str>) -> Result<ControlMessage> {
+    fn build_create(&self, hid_id: u16, name: Option<&str>) -> Result<ControlMessage> {
         // Xbox 360 is the default identity scrcpy uses.
         Ok(ControlMessage::UhidCreate(UhidCreate {
-            id: 0, // filled by the caller via the returned hid_id
+            id: hid_id,
             vendor_id: 0x045e,
             product_id: 0x028e,
             name: name.map(|s| s.to_string()),
@@ -295,7 +296,7 @@ mod tests {
         assert_eq!(hid_id, HID_ID_GAMEPAD_FIRST);
         match msg {
             ControlMessage::UhidCreate(c) => {
-                assert_eq!(c.id, 0); // caller fills this
+                assert_eq!(c.id, hid_id);
                 assert_eq!(c.vendor_id, 0x045e);
                 assert_eq!(c.product_id, 0x028e);
                 assert_eq!(c.name.as_deref(), Some("Pad"));

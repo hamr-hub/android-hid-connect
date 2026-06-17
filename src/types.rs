@@ -87,6 +87,14 @@ pub enum Scancode {
     Kp1 = 0x59, Kp2 = 0x5A, Kp3 = 0x5B, Kp4 = 0x5C, Kp5 = 0x5D,
     Kp6 = 0x5E, Kp7 = 0x5F, Kp8 = 0x60, Kp9 = 0x61, Kp0 = 0x62,
     KpPeriod    = 0x63,
+    /// Reserved HID usage 0x64 — not named in scrcpy's enum but
+    /// constructible via [`Scancode::from_u16_unchecked`] for raw
+    /// byte-passthrough use cases.
+    #[allow(non_camel_case_types)]
+    Reserved64  = 0x64,
+    /// Reserved HID usage 0x65 — same role as [`Self::Reserved64`].
+    #[allow(non_camel_case_types)]
+    Reserved65  = 0x65,
     // Modifiers (USB HID modifier byte bit positions)
     LeftCtrl   = 0xE0,
     LeftShift  = 0xE1,
@@ -156,12 +164,75 @@ impl Scancode {
         })
     }
 
-    /// Construct from any raw value, even those outside the AT-101 range.
-    /// Caller is responsible for ensuring the value is a valid HID usage.
+    /// Construct from a raw `u16` scancode. The caller is responsible
+    /// for ensuring the value is a valid HID usage; values outside
+    /// `0x00..=0x65` and `0xE0..=0xE7` may construct but using them as
+    /// enum variants is undefined behaviour (Rust's enum validity
+    /// rule). To safely hold an arbitrary `u16` for transport, use
+    /// the raw byte directly with [`crate::hid::KeyboardHid::set_key`]
+    /// after [`crate::types::validate_scancode`].
     #[inline]
     pub const fn from_u16_unchecked(v: u16) -> Self {
-        // SAFETY: Scancode is repr(u16) and all bit patterns are valid.
+        // SAFETY: caller asserts `v` is one of the legal scancode
+        // variants (0..=0x65 or 0xE0..=0xE7). `Scancode` is `repr(u16)`
+        // so the bit pattern matches.
         unsafe { std::mem::transmute::<u16, Scancode>(v) }
+    }
+
+    /// Simple ASCII char → scancode mapping used by
+    /// [`crate::session::HidSession::type_text`]. Returns `None` for chars
+    /// outside the supported set. The required modifier (e.g. `LSHIFT` for
+    /// uppercase letters and shifted symbols) is written into `*mods`,
+    /// which is reset to `Modifiers::empty()` on every call.
+    pub fn try_from_char(c: char, mods: &mut Modifiers) -> Option<Self> {
+        *mods = Modifiers::empty();
+        match c {
+            'a'..='z' => Scancode::from_u8((c as u8) - b'a' + 0x04),
+            'A'..='Z' => {
+                *mods = Modifiers::LSHIFT;
+                Scancode::from_u8((c as u8) - b'A' + 0x04)
+            }
+            '1'..='9' => Scancode::from_u8((c as u8) - b'1' + 0x1E),
+            '0' => Some(Scancode::D0),
+            ' '  => Some(Scancode::Space),
+            '\n' => Some(Scancode::Enter),
+            '\t' => Some(Scancode::Tab),
+            '\u{0008}' => Some(Scancode::Backspace),
+            '\u{001b}' => Some(Scancode::Escape),
+            '!' => { *mods = Modifiers::LSHIFT; Some(Scancode::D1) }
+            '@' => { *mods = Modifiers::LSHIFT; Some(Scancode::D2) }
+            '#' => { *mods = Modifiers::LSHIFT; Some(Scancode::D3) }
+            '$' => { *mods = Modifiers::LSHIFT; Some(Scancode::D4) }
+            '%' => { *mods = Modifiers::LSHIFT; Some(Scancode::D5) }
+            '^' => { *mods = Modifiers::LSHIFT; Some(Scancode::D6) }
+            '&' => { *mods = Modifiers::LSHIFT; Some(Scancode::D7) }
+            '*' => { *mods = Modifiers::LSHIFT; Some(Scancode::D8) }
+            '(' => { *mods = Modifiers::LSHIFT; Some(Scancode::D9) }
+            ')' => { *mods = Modifiers::LSHIFT; Some(Scancode::D0) }
+            '-' => Some(Scancode::Minus),
+            '_' => { *mods = Modifiers::LSHIFT; Some(Scancode::Minus) }
+            '=' => Some(Scancode::Equals),
+            '+' => { *mods = Modifiers::LSHIFT; Some(Scancode::Equals) }
+            '[' => Some(Scancode::LeftBrace),
+            '{' => { *mods = Modifiers::LSHIFT; Some(Scancode::LeftBrace) }
+            ']' => Some(Scancode::RightBrace),
+            '}' => { *mods = Modifiers::LSHIFT; Some(Scancode::RightBrace) }
+            '\\' => Some(Scancode::Backslash),
+            '|' => { *mods = Modifiers::LSHIFT; Some(Scancode::Backslash) }
+            ';' => Some(Scancode::Semicolon),
+            ':' => { *mods = Modifiers::LSHIFT; Some(Scancode::Semicolon) }
+            '\'' => Some(Scancode::Apostrophe),
+            '"' => { *mods = Modifiers::LSHIFT; Some(Scancode::Apostrophe) }
+            '`' => Some(Scancode::Grave),
+            '~' => { *mods = Modifiers::LSHIFT; Some(Scancode::Grave) }
+            ',' => Some(Scancode::Comma),
+            '<' => { *mods = Modifiers::LSHIFT; Some(Scancode::Comma) }
+            '.' => Some(Scancode::Period),
+            '>' => { *mods = Modifiers::LSHIFT; Some(Scancode::Period) }
+            '/' => Some(Scancode::Slash),
+            '?' => { *mods = Modifiers::LSHIFT; Some(Scancode::Slash) }
+            _ => None,
+        }
     }
 }
 
@@ -376,5 +447,50 @@ mod tests {
         assert!(validate_scancode(0xE7).is_ok());
         assert!(validate_scancode(0xFF).is_err());
         assert!(validate_scancode(0x100).is_err());
+    }
+
+    #[test]
+    fn scancode_unchecked_boundaries() {
+        // AC-9: pin the unsafe `from_u16_unchecked` path so the
+        // bit-pattern invariant is locked down. Only test values that
+        // correspond to a real `Scancode` variant; constructing an
+        // invalid discriminant via transmute is UB and trips Rust's
+        // enum-validity runtime check in debug builds.
+        assert_eq!(Scancode::from_u16_unchecked(0x0004), Scancode::A);
+        assert_eq!(Scancode::from_u16_unchecked(0x001D), Scancode::Z);
+        assert_eq!(Scancode::from_u16_unchecked(0x001E), Scancode::D1);
+        assert_eq!(Scancode::from_u16_unchecked(0x0027), Scancode::D0);
+        assert_eq!(Scancode::from_u16_unchecked(0x002C), Scancode::Space);
+        assert_eq!(Scancode::from_u16_unchecked(0x003A), Scancode::F1);
+        assert_eq!(Scancode::from_u16_unchecked(0x0045), Scancode::F12);
+        assert_eq!(Scancode::from_u16_unchecked(0x0063), Scancode::KpPeriod);
+        assert_eq!(Scancode::from_u16_unchecked(0x0064), Scancode::Reserved64);
+        assert_eq!(Scancode::from_u16_unchecked(0x0065), Scancode::Reserved65);
+        assert_eq!(Scancode::from_u16_unchecked(0x00E0), Scancode::LeftCtrl);
+        assert_eq!(Scancode::from_u16_unchecked(0x00E1), Scancode::LeftShift);
+        assert_eq!(Scancode::from_u16_unchecked(0x00E7), Scancode::RightGui);
+        // Round-trip through to_u8 for the legal 0..=0x65 + 0xE0..=0xE7 ranges.
+        for raw in [0x04u16, 0x1E, 0x39, 0x4F, 0x65, 0xE0, 0xE7] {
+            let s = Scancode::from_u16_unchecked(raw);
+            assert_eq!(s as u16, raw);
+            assert_eq!(s.to_u8() as u16, raw);
+        }
+    }
+
+    #[test]
+    fn try_from_char_basic() {
+        let mut m = Modifiers::empty();
+        assert_eq!(Scancode::try_from_char('a', &mut m), Some(Scancode::A));
+        assert_eq!(m, Modifiers::empty());
+        assert_eq!(Scancode::try_from_char('A', &mut m), Some(Scancode::A));
+        assert_eq!(m, Modifiers::LSHIFT);
+        assert_eq!(Scancode::try_from_char('5', &mut m), Some(Scancode::D5));
+        assert_eq!(m, Modifiers::empty());
+        assert_eq!(Scancode::try_from_char(' ', &mut m), Some(Scancode::Space));
+        assert_eq!(Scancode::try_from_char('\n', &mut m), Some(Scancode::Enter));
+        assert_eq!(Scancode::try_from_char('!', &mut m), Some(Scancode::D1));
+        assert_eq!(m, Modifiers::LSHIFT);
+        // Unsupported char
+        assert_eq!(Scancode::try_from_char('\u{4e2d}', &mut m), None);
     }
 }

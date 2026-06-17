@@ -76,6 +76,51 @@ cargo run --example type_keys       # type "Hello, world!" into the focused app
 cargo run --example gamepad_demo    # open a virtual gamepad and tilt the stick
 ```
 
+## High-level `HidSession` (for AI / agent control)
+
+The `session` module wraps the lifecycle of one or more UHID devices
+behind a single object that is **panic-safe** — when the session drops
+(either explicitly via `close()` or implicitly via `Drop`) it sends
+`UHID_DESTROY` for every device it opened, even mid-unwind.
+
+```rust,no_run
+use android_hid_connect::session::{HidSession, OpenRequest};
+use android_hid_connect::transport::open_tcp;
+
+let sock = open_tcp("127.0.0.1", 27183).unwrap();
+let mut s = HidSession::open(sock, OpenRequest::all()).unwrap();
+s.set_screen_size(1080, 2400);
+
+s.type_text("hello").unwrap();              // 4 UHID_INPUTs (h down/up + ...)
+s.tap((540, 1200)).unwrap();                // 2 INJECT_TOUCH_EVENTs
+s.swipe((100, 500), (900, 500),
+        std::time::Duration::from_millis(300), 10).unwrap();
+s.set_stick(android_hid_connect::GamepadAxis::LeftX, -0.7).unwrap();
+s.set_button(android_hid_connect::GamepadButton::South, true).unwrap();
+
+s.close().unwrap();   // explicit; DESTROY for kbd + mouse + gamepad
+let _sock = s.into_inner();
+```
+
+`HidSession<T>` is `Send` whenever `T: TransportWrite + Send`, so it
+can be moved into a tokio task or threaded LLM loop. The Drop impl
+calls `try_close_all` inside `catch_unwind`, so a panic in user code
+never leaves a half-open UHID device on the device side.
+
+## Benchmarks
+
+```bash
+cargo bench --bench uhid_throughput
+```
+
+Three criterion benches:
+
+| Bench | What it measures |
+|-------|------------------|
+| `keyboard inject_key (no I/O)` | cost of one key down/up event (no transport) |
+| `uhid_input serialize`         | cost of serializing one `UHID_INPUT` message |
+| `send_one into MockTransport`  | end-to-end serialize + write to a `Vec<u8>` |
+
 ## Wire format
 
 The control socket is a plain TCP stream. Every message starts with a

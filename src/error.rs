@@ -41,6 +41,10 @@ pub enum Error {
     /// (UHID_CREATE / UHID_DESTROY) could not be enqueued.
     #[error("control buffer full; cannot drop non-droppable message")]
     BufferFullCritical,
+
+    /// A `HidSession` lifecycle operation failed (open / close / Drop).
+    #[error("session lifecycle error: {0}")]
+    SessionLifecycle(&'static str),
 }
 
 /// Convenience alias for `Result<T, Error>`.

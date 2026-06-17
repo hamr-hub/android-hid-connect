@@ -50,6 +50,7 @@
 pub mod control;
 pub mod error;
 pub mod hid;
+pub mod session;
 pub mod transport;
 pub mod types;
 

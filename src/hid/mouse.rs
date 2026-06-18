@@ -224,7 +224,10 @@ mod tests {
     fn click_carries_button_state() {
         let m = MouseHid::new();
         let r = m.generate_input_from_click(MouseButton::state(&[MouseButton::Left]));
-        assert_eq!(&r.data[..MOUSE_REPORT_SIZE], &[0x01, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &r.data[..MOUSE_REPORT_SIZE],
+            &[0x01, 0x00, 0x00, 0x00, 0x00]
+        );
     }
 
     #[test]

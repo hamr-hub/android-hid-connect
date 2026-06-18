@@ -3,7 +3,7 @@
 //! panic-safely. Every test drives a `MockTransport` so no real device
 //! is needed.
 
-use android_hid_connect::session::{HidSession, GamepadFrameRaw, OpenRequest};
+use android_hid_connect::session::{GamepadFrameRaw, HidSession, OpenRequest};
 use android_hid_connect::transport::MockTransport;
 use android_hid_connect::types::{GamepadAxis, GamepadButton, HID_ID_GAMEPAD_FIRST};
 
@@ -213,46 +213,14 @@ fn gamepad_frame_pack_and_unchecked_always_sends() {
     assert_eq!(&gamepad_inputs[0].1[5..20], &packed);
 
     let bytes = run(OpenRequest::gamepad_only(), |s| {
-        s.set_frame_raw(
-            GamepadButton::South as u32,
-            100,
-            120,
-            300,
-            -400,
-            1234,
-            0,
-        )
-        .unwrap();
-        s.set_frame_raw(
-            GamepadButton::South as u32,
-            100,
-            120,
-            300,
-            -400,
-            1234,
-            0,
-        )
-        .unwrap();
-        s.set_frame_raw_unchecked(
-            GamepadButton::South as u32,
-            100,
-            120,
-            300,
-            -400,
-            1234,
-            0,
-        )
-        .unwrap();
-        s.set_frame_raw_unchecked(
-            GamepadButton::South as u32,
-            100,
-            120,
-            300,
-            -400,
-            1234,
-            0,
-        )
-        .unwrap(); // explicit duplicate sent unconditionally in unchecked path
+        s.set_frame_raw(GamepadButton::South as u32, 100, 120, 300, -400, 1234, 0)
+            .unwrap();
+        s.set_frame_raw(GamepadButton::South as u32, 100, 120, 300, -400, 1234, 0)
+            .unwrap();
+        s.set_frame_raw_unchecked(GamepadButton::South as u32, 100, 120, 300, -400, 1234, 0)
+            .unwrap();
+        s.set_frame_raw_unchecked(GamepadButton::South as u32, 100, 120, 300, -400, 1234, 0)
+            .unwrap(); // explicit duplicate sent unconditionally in unchecked path
     });
     // set_frame_raw dedupes equal state, so only 1 + 2 unchecked = 3.
     assert_eq!(count_inputs(&bytes), 3);
@@ -261,24 +229,8 @@ fn gamepad_frame_pack_and_unchecked_always_sends() {
 #[test]
 fn gamepad_frame_batch_unchecked_always_sends() {
     let frames = [
-        GamepadFrameRaw::new(
-            GamepadButton::South as u32,
-            100,
-            120,
-            300,
-            -400,
-            1234,
-            0,
-        ),
-        GamepadFrameRaw::new(
-            GamepadButton::South as u32,
-            100,
-            120,
-            300,
-            -400,
-            1234,
-            0,
-        ),
+        GamepadFrameRaw::new(GamepadButton::South as u32, 100, 120, 300, -400, 1234, 0),
+        GamepadFrameRaw::new(GamepadButton::South as u32, 100, 120, 300, -400, 1234, 0),
         GamepadFrameRaw::new(
             GamepadButton::South as u32 | GamepadButton::DpadUp as u32,
             100,

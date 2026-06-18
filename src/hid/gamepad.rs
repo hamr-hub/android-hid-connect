@@ -185,11 +185,7 @@ impl GamepadHid {
     /// Bits are interpreted as a `GamepadButton` bitmap (`u32`), with
     /// upper nibble bits used for dpad state and lower 16 bits used
     /// for standard buttons.
-    pub fn buttons_event(
-        &mut self,
-        gamepad_id: u32,
-        buttons: u32,
-    ) -> Result<ControlMessage> {
+    pub fn buttons_event(&mut self, gamepad_id: u32, buttons: u32) -> Result<ControlMessage> {
         let slot_idx = self
             .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
@@ -199,6 +195,7 @@ impl GamepadHid {
     }
 
     /// Apply all standard gamepad inputs in one report (buttons + sticks + triggers).
+    #[allow(clippy::too_many_arguments)]
     pub fn full_state_event(
         &mut self,
         gamepad_id: u32,
@@ -231,6 +228,7 @@ impl GamepadHid {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn full_state_event_slot_idx(
         &mut self,
         slot_idx: usize,
@@ -243,11 +241,21 @@ impl GamepadHid {
         right_trigger: i16,
     ) -> Option<ControlMessage> {
         debug_assert!(slot_idx < MAX_GAMEPADS);
-        self.full_state_event_slot_idx_raw(slot_idx, buttons, left_x, left_y, right_x, right_y, left_trigger, right_trigger)
-            .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
+        self.full_state_event_slot_idx_raw(
+            slot_idx,
+            buttons,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        )
+        .map(|(id, payload)| self.slot_to_input_message_from_payload(id, payload))
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn full_state_event_slot_idx_raw(
         &mut self,
         slot_idx: usize,
@@ -444,12 +452,7 @@ impl GamepadHid {
     }
 
     /// Apply both left-stick axes in one report (single UHID_INPUT).
-    pub fn left_stick_raw(
-        &mut self,
-        gamepad_id: u32,
-        x: i16,
-        y: i16,
-    ) -> Result<ControlMessage> {
+    pub fn left_stick_raw(&mut self, gamepad_id: u32, x: i16, y: i16) -> Result<ControlMessage> {
         let slot_idx = self
             .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
@@ -489,12 +492,7 @@ impl GamepadHid {
     }
 
     /// Apply both right-stick axes in one report (single UHID_INPUT).
-    pub fn right_stick_raw(
-        &mut self,
-        gamepad_id: u32,
-        x: i16,
-        y: i16,
-    ) -> Result<ControlMessage> {
+    pub fn right_stick_raw(&mut self, gamepad_id: u32, x: i16, y: i16) -> Result<ControlMessage> {
         let slot_idx = self
             .find_slot(gamepad_id)
             .ok_or(Error::UnknownGamepad(gamepad_id))?;
@@ -580,6 +578,7 @@ impl GamepadHid {
 
     /// Apply both sticks and both triggers in one report (single
     /// UHID_INPUT) when the full gamepad frame updates every tick.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_sticks_raw(
         &mut self,
         gamepad_id: u32,
@@ -607,6 +606,7 @@ impl GamepadHid {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_sticks_raw_slot_idx(
         &mut self,
         slot_idx: usize,
@@ -630,6 +630,7 @@ impl GamepadHid {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_sticks_raw_slot_idx_raw(
         &mut self,
         slot_idx: usize,
@@ -715,10 +716,7 @@ impl GamepadHid {
 
     #[inline]
     fn slot_to_input_message_from_slot_idx(&self, slot_idx: usize) -> ControlMessage {
-        self.slot_to_input_message(
-            Self::slot_hid_id(slot_idx),
-            &self.slots[slot_idx],
-        )
+        self.slot_to_input_message(Self::slot_hid_id(slot_idx), &self.slots[slot_idx])
     }
 
     #[inline]
@@ -979,10 +977,28 @@ mod tests {
         g.open(1, None).unwrap();
         let slot_idx = GamepadHid::slot_from_hid_id(HID_ID_GAMEPAD_FIRST).unwrap();
         let msg = g
-            .full_state_event_slot_idx(slot_idx, GamepadButton::South as u32, -3000, 1200, -700, 900, 0x7fff, 0x1234)
+            .full_state_event_slot_idx(
+                slot_idx,
+                GamepadButton::South as u32,
+                -3000,
+                1200,
+                -700,
+                900,
+                0x7fff,
+                0x1234,
+            )
             .expect("initial full-state send");
         assert!(g
-            .full_state_event_slot_idx(slot_idx, GamepadButton::South as u32, -3000, 1200, -700, 900, 0x7fff, 0x1234)
+            .full_state_event_slot_idx(
+                slot_idx,
+                GamepadButton::South as u32,
+                -3000,
+                1200,
+                -700,
+                900,
+                0x7fff,
+                0x1234
+            )
             .is_none());
         match msg {
             ControlMessage::UhidInput(i) => {

@@ -24,7 +24,7 @@ use crate::hid::keyboard::KeyboardHid;
 use crate::hid::mouse::MouseHid;
 use crate::hid::HidDevice;
 use crate::types::{
-    dpad_hat_value, GamepadAxis, GamepadButton, HID_ID_GAMEPAD_FIRST, Modifiers, Scancode,
+    dpad_hat_value, GamepadAxis, GamepadButton, Modifiers, Scancode, HID_ID_GAMEPAD_FIRST,
 };
 
 /// Which HID devices the session should open. Touch events are always
@@ -281,7 +281,7 @@ impl<T: TransportWrite> HidSession<T> {
             s.send(&create)?;
             s.gamepad = Some(g);
             s.gamepad_slot = Some(slot_idx);
-            s.gamepad_hid_id = Some(hid_id as u16);
+            s.gamepad_hid_id = Some(hid_id);
         }
         Ok(s)
     }
@@ -439,6 +439,7 @@ impl<T: TransportWrite> HidSession<T> {
     /// This is the lowest-latency path for full-frame gamepad updates
     /// (one command + one UHID_INPUT at most).
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn set_frame_raw(
         &mut self,
         buttons: u32,
@@ -460,8 +461,7 @@ impl<T: TransportWrite> HidSession<T> {
             left_trigger,
             right_trigger,
         ) {
-            self.transport
-                .push_gamepad_input(hid_id, &payload)?;
+            self.transport.push_gamepad_input(hid_id, &payload)?;
         }
         Ok(())
     }
@@ -472,6 +472,7 @@ impl<T: TransportWrite> HidSession<T> {
     /// owns the current gamepad state and does not need dedupe inside
     /// the library.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn set_frame_raw_unchecked(
         &mut self,
         buttons: u32,
@@ -597,10 +598,7 @@ impl<T: TransportWrite> HidSession<T> {
     /// Use this when your control loop already owns a complete frame
     /// stream and wants every frame pushed (including duplicates).
     #[inline]
-    pub fn set_frame_raw_batch_unchecked(
-        &mut self,
-        frames: &[GamepadFrameRaw],
-    ) -> Result<usize> {
+    pub fn set_frame_raw_batch_unchecked(&mut self, frames: &[GamepadFrameRaw]) -> Result<usize> {
         if frames.is_empty() {
             return Ok(0);
         }
@@ -629,7 +627,10 @@ impl<T: TransportWrite> HidSession<T> {
     /// payload directly. This is intentionally explicit and is ideal when
     /// your loop already emits normalized HID report bytes.
     #[inline]
-    pub fn set_frame_raw_packed_batch(&mut self, frames: &[[u8; GAMEPAD_FRAME_BYTES]]) -> Result<usize> {
+    pub fn set_frame_raw_packed_batch(
+        &mut self,
+        frames: &[[u8; GAMEPAD_FRAME_BYTES]],
+    ) -> Result<usize> {
         if frames.is_empty() {
             return Ok(0);
         }
@@ -695,8 +696,7 @@ impl<T: TransportWrite> HidSession<T> {
             left_trigger,
             right_trigger,
         ) {
-            self.transport
-                .push_gamepad_input(hid_id, &payload)?;
+            self.transport.push_gamepad_input(hid_id, &payload)?;
         }
         Ok(())
     }
@@ -706,8 +706,7 @@ impl<T: TransportWrite> HidSession<T> {
     pub fn set_button(&mut self, btn: GamepadButton, pressed: bool) -> Result<()> {
         let (slot_idx, gp) = self.gamepad_with_cached_slot()?;
         if let Some((hid_id, payload)) = gp.button_event_slot_idx_raw(slot_idx, btn, pressed) {
-            self.transport
-                .push_gamepad_input(hid_id, &payload)?;
+            self.transport.push_gamepad_input(hid_id, &payload)?;
         }
         Ok(())
     }

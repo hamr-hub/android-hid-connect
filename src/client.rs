@@ -33,12 +33,12 @@
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
+use crate::coalesce::DIRECT_GAMEPAD_BATCH_FRAMES;
 use crate::control::message::{
     ControlMessage, GetClipboard, SetClipboard, SetDisplayPower, StartApp,
 };
-use crate::coalesce::DIRECT_GAMEPAD_BATCH_FRAMES;
 use crate::error::{Error, Result, TransportWrite};
-use crate::session::{GamepadFrameRaw, GAMEPAD_FRAME_BYTES, HidSession};
+use crate::session::{GamepadFrameRaw, HidSession, GAMEPAD_FRAME_BYTES};
 use crate::types::{GamepadAxis, GamepadButton, Modifiers};
 
 /// Default channel bound for `HidClient`. Bounds the back-pressure
@@ -384,9 +384,7 @@ impl HidClient {
             }
         };
         self.tx.try_send(cmd).map_err(|e| match e {
-            mpsc::TrySendError::Full(_) => {
-                Error::SessionLifecycle("channel full (back-pressure)")
-            }
+            mpsc::TrySendError::Full(_) => Error::SessionLifecycle("channel full (back-pressure)"),
             mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
         })?;
         Ok(())
@@ -424,7 +422,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -437,7 +437,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -450,7 +452,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -463,7 +467,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -476,7 +482,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -489,7 +497,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -502,7 +512,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -515,7 +527,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -543,7 +557,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -566,7 +582,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -579,10 +597,7 @@ impl HidClient {
     /// Send packed 15-byte gamepad frames through one channel send.
     /// This is the lowest-overhead path when the upstream loop already
     /// emits raw HID payloads.
-    pub fn send_frame_packed_batch(
-        &self,
-        frames: Vec<[u8; GAMEPAD_FRAME_BYTES]>,
-    ) -> Result<()> {
+    pub fn send_frame_packed_batch(&self, frames: Vec<[u8; GAMEPAD_FRAME_BYTES]>) -> Result<()> {
         if frames.is_empty() {
             return Ok(());
         }
@@ -601,7 +616,9 @@ impl HidClient {
             return Ok(());
         }
         if len > DIRECT_GAMEPAD_BATCH_FRAMES {
-            return Err(Error::SessionLifecycle("frame packed batch fixed length overflow"));
+            return Err(Error::SessionLifecycle(
+                "frame packed batch fixed length overflow",
+            ));
         }
         if len == 1 {
             return self.send_frame_packed(frames[0]);
@@ -642,7 +659,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -658,7 +677,9 @@ impl HidClient {
             return Ok(());
         }
         if len > DIRECT_GAMEPAD_BATCH_FRAMES {
-            return Err(Error::SessionLifecycle("frame packed batch fixed length overflow"));
+            return Err(Error::SessionLifecycle(
+                "frame packed batch fixed length overflow",
+            ));
         }
         if len == 1 {
             return self.try_send_frame_packed(frames[0]);
@@ -672,7 +693,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -685,7 +708,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -705,7 +730,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -714,10 +741,7 @@ impl HidClient {
     ///
     /// Use this when frame cadence matters more than transport payload
     /// suppression and drops due to queue-full can be handled upstream.
-    pub fn try_send_frame_batch_unchecked(
-        &self,
-        frames: Vec<GamepadFrameRaw>,
-    ) -> Result<()> {
+    pub fn try_send_frame_batch_unchecked(&self, frames: Vec<GamepadFrameRaw>) -> Result<()> {
         if frames.is_empty() {
             return Ok(());
         }
@@ -730,7 +754,9 @@ impl HidClient {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
                 }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+                mpsc::TrySendError::Disconnected(_) => {
+                    Error::DispatcherDown("channel disconnected")
+                }
             })?;
         Ok(())
     }
@@ -766,14 +792,10 @@ impl HidClient {
 
     /// Non-blocking flush request for coalesced UHID_INPUT writes.
     pub fn try_flush(&self) -> Result<()> {
-        self.tx
-            .try_send(HidCommand::Flush)
-            .map_err(|e| match e {
-                mpsc::TrySendError::Full(_) => {
-                    Error::SessionLifecycle("channel full (back-pressure)")
-                }
-                mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
-            })?;
+        self.tx.try_send(HidCommand::Flush).map_err(|e| match e {
+            mpsc::TrySendError::Full(_) => Error::SessionLifecycle("channel full (back-pressure)"),
+            mpsc::TrySendError::Disconnected(_) => Error::DispatcherDown("channel disconnected"),
+        })?;
         Ok(())
     }
 }
@@ -806,7 +828,11 @@ impl<'a> GamepadFrameBatcher<'a> {
             client,
             fixed_frames: [GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0); DIRECT_GAMEPAD_BATCH_FRAMES],
             fixed_len: 0,
-            frames: if use_fixed { Vec::new() } else { Vec::with_capacity(batch_size) },
+            frames: if use_fixed {
+                Vec::new()
+            } else {
+                Vec::with_capacity(batch_size)
+            },
             dedupe: true,
             batch_size,
             use_fixed,
@@ -822,7 +848,11 @@ impl<'a> GamepadFrameBatcher<'a> {
             client,
             fixed_frames: [GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0); DIRECT_GAMEPAD_BATCH_FRAMES],
             fixed_len: 0,
-            frames: if use_fixed { Vec::new() } else { Vec::with_capacity(batch_size) },
+            frames: if use_fixed {
+                Vec::new()
+            } else {
+                Vec::with_capacity(batch_size)
+            },
             dedupe: false,
             batch_size,
             use_fixed,
@@ -862,9 +892,7 @@ impl<'a> GamepadFrameBatcher<'a> {
     pub fn try_push(&mut self, frame: GamepadFrameRaw) -> Result<()> {
         if self.use_fixed {
             if self.fixed_len >= self.batch_size {
-                if let Err(err) = self.try_flush() {
-                    return Err(err);
-                }
+                self.try_flush()?;
                 if self.fixed_len >= self.batch_size {
                     return Err(Error::SessionLifecycle(
                         "frame batcher fixed buffer full (flush did not make space)",
@@ -1040,7 +1068,7 @@ impl<'a> GamepadFrameBatcher<'a> {
             }
             return result;
         }
-        let frames = std::mem::replace(&mut self.frames, Vec::new());
+        let frames = std::mem::take(&mut self.frames);
         let result = if self.dedupe {
             self.client.send_frame_batch(frames.clone())
         } else {
@@ -1106,7 +1134,7 @@ impl<'a> GamepadFrameBatcher<'a> {
             }
             return result;
         }
-        let frames = std::mem::replace(&mut self.frames, Vec::new());
+        let frames = std::mem::take(&mut self.frames);
         let result = if self.dedupe {
             self.client.try_send_frame_batch(frames.clone())
         } else {
@@ -1173,7 +1201,11 @@ impl<'a> PackedGamepadFrameBatcher<'a> {
             client,
             fixed_frames: [[0u8; GAMEPAD_FRAME_BYTES]; DIRECT_GAMEPAD_BATCH_FRAMES],
             fixed_len: 0,
-            frames: if use_fixed { Vec::new() } else { Vec::with_capacity(batch_size) },
+            frames: if use_fixed {
+                Vec::new()
+            } else {
+                Vec::with_capacity(batch_size)
+            },
             batch_size,
             use_fixed,
         }
@@ -1212,9 +1244,7 @@ impl<'a> PackedGamepadFrameBatcher<'a> {
     pub fn try_push(&mut self, frame: [u8; GAMEPAD_FRAME_BYTES]) -> Result<()> {
         if self.use_fixed {
             if self.fixed_len >= self.batch_size {
-                if let Err(err) = self.try_flush() {
-                    return Err(err);
-                }
+                self.try_flush()?;
                 if self.fixed_len >= self.batch_size {
                     return Err(Error::SessionLifecycle(
                         "packed frame batcher fixed buffer full (flush did not make space)",
@@ -1382,7 +1412,7 @@ impl<'a> PackedGamepadFrameBatcher<'a> {
             }
             return result;
         }
-        let frames = std::mem::replace(&mut self.frames, Vec::new());
+        let frames = std::mem::take(&mut self.frames);
         let result = self.client.send_frame_packed_batch(frames.clone());
         if let Err(err) = result {
             self.frames = frames;
@@ -1431,7 +1461,7 @@ impl<'a> PackedGamepadFrameBatcher<'a> {
             }
             return result;
         }
-        let frames = std::mem::replace(&mut self.frames, Vec::new());
+        let frames = std::mem::take(&mut self.frames);
         let result = self.client.try_send_frame_packed_batch(frames.clone());
         if let Err(err) = result {
             self.frames = frames;
@@ -1666,10 +1696,18 @@ mod tests {
         let client = HidClient { tx };
         let mut batcher = GamepadFrameBatcher::dedupe(&client, 2);
 
-        assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
-        assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
-        assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
-        assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_err());
+        assert!(batcher
+            .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+            .is_ok());
+        assert!(batcher
+            .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+            .is_ok());
+        assert!(batcher
+            .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+            .is_ok());
+        assert!(batcher
+            .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+            .is_err());
 
         let overflow_err = batcher
             .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
@@ -1711,11 +1749,19 @@ mod tests {
         {
             let mut batcher = GamepadFrameBatcher::dedupe(&client, 2);
             // push 1 + push 2 → flush puts one item in the channel.
-            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
-            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
+            assert!(batcher
+                .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+                .is_ok());
+            assert!(batcher
+                .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+                .is_ok());
             // push 3 + push 4 → batcher is full again, channel is full.
-            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_ok());
-            assert!(batcher.try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0)).is_err());
+            assert!(batcher
+                .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+                .is_ok());
+            assert!(batcher
+                .try_push(GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0))
+                .is_err());
             // Drop here MUST NOT block. If it does, the test framework
             // will hang the suite. The test process will be killed by
             // the CI timeout and we will see the regression.
@@ -1847,7 +1893,15 @@ mod tests {
         batcher.flush().unwrap();
 
         match rx.try_recv().unwrap() {
-            HidCommand::GamepadFrameRaw { buttons, left_x, left_y, right_x, right_y, left_trigger, right_trigger } => {
+            HidCommand::GamepadFrameRaw {
+                buttons,
+                left_x,
+                left_y,
+                right_x,
+                right_y,
+                left_trigger,
+                right_trigger,
+            } => {
                 assert_eq!(buttons, frame.buttons);
                 assert_eq!(left_x, frame.left_x);
                 assert_eq!(left_y, frame.left_y);
@@ -1893,7 +1947,9 @@ mod tests {
         let expected_buttons = GamepadButton::South as u32;
         client.send_buttons(expected_buttons).unwrap();
         match rx.try_recv().unwrap() {
-            HidCommand::GamepadButtons { buttons: expected_buttons } => {}
+            HidCommand::GamepadButtons {
+                buttons: _expected_buttons,
+            } => {}
             other => panic!("expected GamepadButtons command, got {other:?}"),
         }
 
@@ -1906,9 +1962,7 @@ mod tests {
             other => panic!("expected GamepadStickRaw command, got {other:?}"),
         }
 
-        client
-            .send_sticks_raw(1, 2, 3, 4, 5, 6)
-            .unwrap();
+        client.send_sticks_raw(1, 2, 3, 4, 5, 6).unwrap();
         match rx.try_recv().unwrap() {
             HidCommand::GamepadSticksRaw {
                 left_x: 1,

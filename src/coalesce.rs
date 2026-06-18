@@ -18,8 +18,8 @@
 use std::time::{Duration, Instant};
 
 use crate::control::message::{ControlMessage, ControlMsgType};
-use crate::error::{Error, Result};
 use crate::error::TransportWrite;
+use crate::error::{Error, Result};
 use crate::session::GamepadFrameRaw;
 use crate::types::{dpad_hat_value, HID_MAX_SIZE};
 
@@ -93,7 +93,7 @@ impl<T: TransportWrite> CoalescingWriter<T> {
     /// Same as `new` but with a custom window + hard limit. Mostly
     /// useful for tests that want deterministic flush behaviour.
     pub fn with_limits(transport: T, window: Duration, hard_limit: usize) -> Self {
-        let pending_cap = hard_limit.min(DEFAULT_PENDING_CAPACITY).max(MIN_PENDING_CAPACITY);
+        let pending_cap = hard_limit.clamp(MIN_PENDING_CAPACITY, DEFAULT_PENDING_CAPACITY);
         let direct = hard_limit == 0 && window.is_zero();
         Self {
             transport,
@@ -116,12 +116,7 @@ impl<T: TransportWrite> CoalescingWriter<T> {
     }
 
     #[inline]
-    fn push_uhid_input_to_buf(
-        buf: &mut Vec<u8>,
-        id: u16,
-        size: usize,
-        data: &[u8],
-    ) -> Result<()> {
+    fn push_uhid_input_to_buf(buf: &mut Vec<u8>, id: u16, size: usize, data: &[u8]) -> Result<()> {
         if size > HID_MAX_SIZE || size > data.len() {
             return Err(Error::ControlMessageTooLarge {
                 size,
@@ -155,11 +150,7 @@ impl<T: TransportWrite> CoalescingWriter<T> {
     }
 
     #[inline]
-    fn encode_gamepad_input_slice(
-        buf: &mut [u8],
-        id: u16,
-        data: &[u8; GAMEPAD_REPORT_SIZE],
-    ) {
+    fn encode_gamepad_input_slice(buf: &mut [u8], id: u16, data: &[u8; GAMEPAD_REPORT_SIZE]) {
         debug_assert!(buf.len() >= GAMEPAD_REPORT_SIZE + 5);
         buf[0] = ControlMsgType::UhidInput as u8;
         let id_be = id.to_be_bytes();
@@ -172,11 +163,7 @@ impl<T: TransportWrite> CoalescingWriter<T> {
     }
 
     #[inline]
-    fn push_gamepad_input_fields_to_buf(
-        buf: &mut Vec<u8>,
-        id: u16,
-        frame: &GamepadFrameRaw,
-    ) {
+    fn push_gamepad_input_fields_to_buf(buf: &mut Vec<u8>, id: u16, frame: &GamepadFrameRaw) {
         let buttons = frame.buttons;
         let left_x = frame.left_x;
         let left_y = frame.left_y;
@@ -216,11 +203,7 @@ impl<T: TransportWrite> CoalescingWriter<T> {
     }
 
     #[inline]
-    fn encode_gamepad_input_fields_slice(
-        buf: &mut [u8],
-        id: u16,
-        frame: &GamepadFrameRaw,
-    ) {
+    fn encode_gamepad_input_fields_slice(buf: &mut [u8], id: u16, frame: &GamepadFrameRaw) {
         debug_assert!(buf.len() >= GAMEPAD_REPORT_SIZE + 5);
         buf[0] = ControlMsgType::UhidInput as u8;
         let id_be = id.to_be_bytes();
@@ -315,7 +298,12 @@ impl<T: TransportWrite> CoalescingWriter<T> {
     /// by the production hot path today — kept for future use.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn push_uhid_input(&mut self, id: u16, size: u16, data: &[u8]) -> Result<FlushReason> {
+    pub(crate) fn push_uhid_input(
+        &mut self,
+        id: u16,
+        size: u16,
+        data: &[u8],
+    ) -> Result<FlushReason> {
         let size = size as usize;
         if self.direct {
             self.pushed += 1;
@@ -532,11 +520,11 @@ impl<T: TransportWrite> CoalescingWriter<T> {
                 self.written += serialized_len as u64;
                 self.flushes += 1;
                 self.last_flush = Instant::now();
-                return Ok(if msg.is_critical() {
+                Ok(if msg.is_critical() {
                     FlushReason::Critical
                 } else {
                     FlushReason::Window
-                });
+                })
             }
             _ => {
                 let serialized = self.push_message_to_scratch(msg)?.to_vec();
@@ -546,11 +534,11 @@ impl<T: TransportWrite> CoalescingWriter<T> {
                 self.written += serialized_len as u64;
                 self.flushes += 1;
                 self.last_flush = Instant::now();
-                return Ok(if msg.is_critical() {
+                Ok(if msg.is_critical() {
                     FlushReason::Critical
                 } else {
                     FlushReason::Window
-                });
+                })
             }
         }
     }
@@ -579,7 +567,12 @@ impl<T: TransportWrite> CoalescingWriter<T> {
 
         match msg {
             ControlMessage::UhidInput(input) => {
-                Self::push_uhid_input_to_buf(&mut self.pending, input.id, input.size as usize, &input.data)?;
+                Self::push_uhid_input_to_buf(
+                    &mut self.pending,
+                    input.id,
+                    input.size as usize,
+                    &input.data,
+                )?;
             }
             _ => {
                 let serialized = self.push_message_to_scratch(msg)?.to_vec();
@@ -640,6 +633,7 @@ impl<T: TransportWrite> CoalescingWriter<T> {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn is_direct(&self) -> bool {
         self.direct
     }
@@ -753,8 +747,9 @@ mod tests {
         w.push(&input_msg(1, 0x20)).unwrap();
         assert_eq!(w.pending_bytes(), 26);
         // Critical message — must flush pending + write critical.
-        let r =
-            w.push(&ControlMessage::UhidDestroy(UhidDestroy { id: 1 })).unwrap();
+        let r = w
+            .push(&ControlMessage::UhidDestroy(UhidDestroy { id: 1 }))
+            .unwrap();
         assert_eq!(r, FlushReason::Critical);
         let t = w.into_inner().unwrap();
         let bytes = t.into_bytes();
@@ -816,7 +811,7 @@ mod tests {
         assert_eq!(w.pending_bytes(), 0);
         let t = w.into_inner().unwrap();
         let bytes = t.into_bytes();
-        assert_eq!(bytes.len(), 1 * (GAMEPAD_REPORT_SIZE + 5));
+        assert_eq!(bytes.len(), GAMEPAD_REPORT_SIZE + 5);
     }
 
     #[test]
@@ -828,7 +823,7 @@ mod tests {
         assert_eq!(w.pending_bytes(), 0);
         let t = w.into_inner().unwrap();
         let bytes = t.into_bytes();
-        assert_eq!(bytes.len(), 1 * (GAMEPAD_REPORT_SIZE + 5));
+        assert_eq!(bytes.len(), GAMEPAD_REPORT_SIZE + 5);
     }
 
     #[test]
@@ -840,7 +835,7 @@ mod tests {
         assert_eq!(w.pending_bytes(), 0);
         let t = w.into_inner().unwrap();
         let bytes = t.into_bytes();
-        assert_eq!(bytes.len(), 1 * (GAMEPAD_REPORT_SIZE + 5));
+        assert_eq!(bytes.len(), GAMEPAD_REPORT_SIZE + 5);
     }
 
     #[test]

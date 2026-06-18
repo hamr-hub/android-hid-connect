@@ -15,11 +15,17 @@ const TAG_UHID_INPUT: u8 = 13;
 
 #[test]
 fn default_open_enables_coalescing() {
-    // 100 stick-tilt events back-to-back should NOT all hit the wire
-    // immediately — the writer should buffer them until flush.
+    // 100 stick-tilt events with varying values should NOT all hit the
+    // wire immediately — the writer should buffer them until flush.
+    // (Using constant values would be deduped by the gamepad state
+    // machine before reaching the coalescing writer — see AC-S7.)
     let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
-    for _ in 0..100 {
-        s.set_stick(GamepadAxis::LeftX, 0.5).unwrap();
+    for i in 0..100 {
+        // Alternate values to bypass axis dedup; values stay in [-1, 1].
+        // Start from i=1 to avoid matching the initial 0.0 gamepad axis
+        // state (axis_rescale(0) == axis_rescale(0.0) == 0x8000).
+        let v = ((i + 1) as f32 / 100.0).clamp(-1.0, 1.0);
+        s.set_stick(GamepadAxis::LeftX, v).unwrap();
     }
     // pushed = 1 CREATE (critical) + 100 inputs = 101
     let (pushed, written, pending) = s.stats();
@@ -49,8 +55,12 @@ fn explicit_flush_drains_buffer() {
 #[test]
 fn close_flushes_via_into_inner() {
     let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only()).unwrap();
-    for _ in 0..5 {
-        s.set_stick(GamepadAxis::LeftY, -0.3).unwrap();
+    for i in 0..5 {
+        // Vary the Y value so axis dedup does not eat the events.
+        // Start from -0.3 + 1*0.05 to avoid matching the initial 0.0
+        // gamepad axis state.
+        let v = -0.3 + ((i + 1) as f32) * 0.05;
+        s.set_stick(GamepadAxis::LeftY, v).unwrap();
     }
     s.close().unwrap();
     let t = s.into_inner();
@@ -110,7 +120,8 @@ fn critical_message_passes_through() {
 
 #[test]
 fn direct_packed_batch_flushes_once() {
-    let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+    let mut s =
+        HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
     let frames = vec![[0u8; 15]; 64];
     s.set_frame_raw_packed_batch(&frames).unwrap();
     // create + one flushed dispatch.
@@ -123,7 +134,8 @@ fn direct_packed_batch_flushes_once() {
 fn direct_raw_batch_unchecked_flushes_once() {
     use android_hid_connect::session::GamepadFrameRaw;
 
-    let mut s = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
+    let mut s =
+        HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime()).unwrap();
     let frames = vec![
         GamepadFrameRaw::new(1, 0, 0, 0, 0, 0, 0),
         GamepadFrameRaw::new(2, 1, -1, 2, -2, 100, 200),

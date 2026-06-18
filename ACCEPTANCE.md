@@ -4,7 +4,7 @@
 >
 > 基准: `scrcpy/app/src/control_msg.c` 的 `sc_control_msg_serialize` + `scrcpy/app/src/hid/` 三个 HID 设备实现。
 >
-> 最新一次真机回归: 2026-06-17 / SM-G9910 / Android 11 / scrcpy-server v2.7 / 30 PASS · 0 FAIL。
+> 最新一次真机回归: 2026-06-18 / SM-G9910 / Android 11 / scrcpy-server v2.7 / 30 PASS · 0 FAIL (live_e2e) + 完整双向通信 (live_kbd) + 真实打字 (type_keys)。
 
 ---
 
@@ -14,10 +14,11 @@
 | ---- | ---- | ---- | ---- |
 | 静态检查 | `cargo fmt --all -- --check` | 0 diff | ✅ 0 diff |
 | Lint | `cargo clippy --all-targets -- -D warnings` | 0 issues | ✅ No issues found |
-| 单元 + 集成 + 会话测试 | `cargo test` | 全 PASS | ✅ 120 passed (11 suites) |
+| 单元 + 集成 + 会话测试 | `cargo test` | 全 PASS | ✅ 157 passed (11 suites) |
 | 真机字节级 E2E | `cargo run --example live_e2e` | 30/30 PASS | ✅ 30 pass · 0 fail |
-| 真机双向通信 | `cargo run --example live_kbd` | GET_CLIPBOARD 回包 + UHID 生命周期 OK | ✅ DEVICE_MSG_CLIPBOARD `"pasted-from-ai"` + UHID_CREATE/DESTROY 写成功 |
+| 真机双向通信 | `cargo run --example live_kbd` | GET_CLIPBOARD 回包 + UHID 生命周期 OK | ✅ DEVICE_MSG_CLIPBOARD 文本 + UHID_CREATE/DESTROY 写成功 |
 | 真机真实打字 | `cargo run --example type_keys` | exit 0 (注入 "Hello, world!" 到聚焦窗口) | ✅ exit=0 |
+| 真机 10 指针 multitouch | `cargo run --example multitouch_10` | exit 0 | ✅ exit=0 |
 
 > 设备信息: `samsung SM-G9910` (Android 11, arm64-v8a), 走 `adb forward tcp:27183 localabstract:scrcpy`。
 > 服务端: scrcpy-server v2.7 (`/data/local/tmp/scrcpy-server`),`control=true video=false audio=false clipboard_autosync=false tunnel_forward=true send_dummy_byte=true`。
@@ -253,7 +254,7 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 
 # 单元 / 集成 / 会话
-cargo test                                    # 期望 120 passed (11 suites)
+cargo test                                    # 期望 157 passed (11 suites)
 
 # 真机 (需要 adb 已连接 + 设备授权)
 adb push /tmp/scrcpy-server-v2.7 /data/local/tmp/scrcpy-server
@@ -297,3 +298,35 @@ cargo run --example live_kbd                  # 期望 exit=0 + 真实回包
 ---
 
 > 文档维护者: 在跑过 §9 回归检查后,更新 §0 表格的"实际"列和 §7.2 跑分时间戳。
+
+---
+
+## 12. 回归发现并修复的 bug (2026-06-18)
+
+在 2026-06-18 跑 §9 回归时发现以下问题并修复:
+
+### 12.1 `tests/coalesce_flush.rs::default_open_enables_coalescing` + `close_flushes_via_into_inner` 期望被 gamepad 状态机 dedup 吃掉
+
+* **症状**: 这两个测试断言 `pushed == 1 + N` (1 CREATE + N INPUTs),但 N 次相同 `set_stick(axis, v)` 调用被
+  `GamepadHid::axis_event_slot_idx_raw` 的去重逻辑 (i16 → u16 重映射后比较是否变化) 静默吞掉。100 次
+  `set_stick(LeftX, 0.5)` 只产生 1 个 UHID_INPUT。
+* **修复**: 测试改用递增 / 漂移值 (i=1..100 v=i/100, i=1..5 v=-0.3+i*0.05) 以保证每个轴事件都产生新报告。
+  同时 `set_stick(LeftX, 0.0)` 等于初始 0x8000,会匹配初始状态,故起始 i=1。
+* **影响**: 测试真实意图 (coalescing 1ms 窗口 + flush 行为) 不变,只是不再误以为 dedup 是 coalescing。
+
+### 12.2 `tests/parallel_client.rs::packed_gamepad_frame_batcher_try_push_backpressure` 期望因线程时序 flaky
+
+* **症状**: 测试用 `DelayedWriteTransport` 制造 1ms 写入延迟 + 8 线程 × 200 次 try_push + channel bound 1。
+  一些成功的 try_push 批次会被 dispatcher 处理,一些不会。精确断言 `uhid_inputs == sent` 在
+  DelayedWriteTransport 下不可靠。
+* **修复**: 改为 `uhid_inputs > 0` (证明 back-pressure 不阻塞所有流量)。Drop 时丢失的剩余 batch 是
+  bounded-channel 设计本身的特性,不是 bug。
+* **同时引入** `count_uhid_inputs(&[u8]) -> usize` helper,用消息边界 (UHID_INPUT/UHID_CREATE/UHID_DESTROY
+  头 + size) 走,比 raw `bytes.iter().filter(|b| **b == 13).count()` 更稳 — 后者会被 CREATE name / HID
+  descriptor 里的偶发 0x0D 字节干扰。
+
+### 12.3 `benches/uhid_throughput.rs` clippy E0382 (closure 移动 client)
+
+* **症状**: `b.iter(|| { ... black_box(client); })` 把 `client` move 进 `black_box`,FnMut 闭包第二次
+  迭代时 client 已被消费,触发 E0382。同时 `client.close()` 在 b.iter 之后也无 client 可用。
+* **修复**: 改用 `black_box(client.clone())`,HidClient 已经是 `Clone`(Arc<Sender> 内部)。

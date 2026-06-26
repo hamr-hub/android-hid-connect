@@ -275,53 +275,62 @@ impl ControlMessage {
     /// bytes written.
     pub fn serialize_into(&self, buf: &mut Vec<u8>) -> Result<usize> {
         let start = buf.len();
-        buf.push(self.msg_type() as u8);
-        match self {
-            Self::UhidCreate(c) => serialize_uhid_create(c, buf)?,
-            Self::UhidInput(i) => serialize_uhid_input(i, buf)?,
-            Self::UhidDestroy(d) => serialize_uhid_destroy(d, buf),
-            Self::InjectKeycode(k) => serialize_inject_keycode(k, buf),
-            Self::InjectText(t) => serialize_inject_text(t, buf),
-            Self::InjectTouchEvent(t) => serialize_inject_touch(t, buf),
-            Self::InjectScrollEvent(s) => serialize_inject_scroll(s, buf),
-            Self::BackOrScreenOn(b) => {
-                buf.push(b.action);
+        let result = (|| -> Result<()> {
+            buf.push(self.msg_type() as u8);
+            match self {
+                Self::UhidCreate(c) => serialize_uhid_create(c, buf)?,
+                Self::UhidInput(i) => serialize_uhid_input(i, buf)?,
+                Self::UhidDestroy(d) => serialize_uhid_destroy(d, buf),
+                Self::InjectKeycode(k) => serialize_inject_keycode(k, buf),
+                Self::InjectText(t) => serialize_inject_text(t, buf),
+                Self::InjectTouchEvent(t) => serialize_inject_touch(t, buf),
+                Self::InjectScrollEvent(s) => serialize_inject_scroll(s, buf),
+                Self::BackOrScreenOn(b) => {
+                    buf.push(b.action);
+                }
+                Self::GetClipboard(g) => {
+                    buf.push(g.copy_key);
+                }
+                Self::SetClipboard(s) => serialize_set_clipboard(s, buf),
+                Self::SetDisplayPower(s) => {
+                    buf.push(s.on as u8);
+                }
+                Self::StartApp(s) => serialize_start_app(s, buf)?,
+                Self::CameraSetTorch(t) => {
+                    buf.push(t.on as u8);
+                }
+                Self::ResizeDisplay(r) => {
+                    buf.extend_from_slice(&r.width.to_be_bytes());
+                    buf.extend_from_slice(&r.height.to_be_bytes());
+                }
+                Self::AiConfig(c) => {
+                    buf.push(c.flags);
+                    buf.extend_from_slice(&c.sample_interval_ms.to_be_bytes());
+                    buf.extend_from_slice(&c.feature_dim.to_be_bytes());
+                }
+                Self::AiQuery(q) => {
+                    buf.extend_from_slice(&q.since_timestamp_ms.to_be_bytes());
+                }
+                Self::AiPause => { /* no payload */ }
+                Self::ExpandNotificationPanel
+                | Self::ExpandSettingsPanel
+                | Self::CollapsePanels
+                | Self::RotateDevice
+                | Self::OpenHardKeyboardSettings
+                | Self::ResetVideo
+                | Self::CameraZoomIn
+                | Self::CameraZoomOut => { /* no payload */ }
             }
-            Self::GetClipboard(g) => {
-                buf.push(g.copy_key);
-            }
-            Self::SetClipboard(s) => serialize_set_clipboard(s, buf),
-            Self::SetDisplayPower(s) => {
-                buf.push(s.on as u8);
-            }
-            Self::StartApp(s) => serialize_start_app(s, buf)?,
-            Self::CameraSetTorch(t) => {
-                buf.push(t.on as u8);
-            }
-            Self::ResizeDisplay(r) => {
-                buf.extend_from_slice(&r.width.to_be_bytes());
-                buf.extend_from_slice(&r.height.to_be_bytes());
-            }
-            Self::AiConfig(c) => {
-                buf.push(c.flags);
-                buf.extend_from_slice(&c.sample_interval_ms.to_be_bytes());
-                buf.extend_from_slice(&c.feature_dim.to_be_bytes());
-            }
-            Self::AiQuery(q) => {
-                buf.extend_from_slice(&q.since_timestamp_ms.to_be_bytes());
-            }
-            Self::AiPause => { /* no payload */ }
-            Self::ExpandNotificationPanel
-            | Self::ExpandSettingsPanel
-            | Self::CollapsePanels
-            | Self::RotateDevice
-            | Self::OpenHardKeyboardSettings
-            | Self::ResetVideo
-            | Self::CameraZoomIn
-            | Self::CameraZoomOut => { /* no payload */ }
+            Ok(())
+        })();
+        if let Err(err) = result {
+            buf.truncate(start);
+            return Err(err);
         }
+
         let written = buf.len() - start;
         if written > CONTROL_MSG_MAX_SIZE {
+            buf.truncate(start);
             return Err(Error::ControlMessageTooLarge {
                 size: written,
                 max: CONTROL_MSG_MAX_SIZE,
@@ -389,7 +398,7 @@ fn serialize_uhid_input(i: &UhidInput, buf: &mut Vec<u8>) -> Result<()> {
     write_u16_be(buf, i.id);
     if i.size as usize > HID_MAX_SIZE {
         return Err(Error::ControlMessageTooLarge {
-            size: i.size as usize,
+            size: i.size as usize + 5,
             max: HID_MSG_BUDGET,
         });
     }
@@ -549,6 +558,65 @@ mod tests {
         })
         .serialize();
         assert!(matches!(r, Err(Error::NameTooLong { size: 128 })));
+    }
+
+    #[test]
+    fn serialize_into_rolls_back_buffer_on_validation_error() {
+        let mut buf = vec![0xaa, 0xbb];
+        let msg = ControlMessage::UhidCreate(UhidCreate {
+            id: 1,
+            vendor_id: 0,
+            product_id: 0,
+            name: Some("a".repeat(128)),
+            report_desc: vec![0x05, 0x01],
+        });
+
+        let err = msg.serialize_into(&mut buf).unwrap_err();
+
+        assert!(matches!(err, Error::NameTooLong { size: 128 }));
+        assert_eq!(buf, vec![0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn uhid_input_over_hid_size_returns_control_message_too_large() {
+        let mut buf = vec![0xcc];
+        let msg = ControlMessage::UhidInput(UhidInput {
+            id: 1,
+            size: HID_MAX_SIZE as u16 + 1,
+            data: [0; HID_MAX_SIZE],
+        });
+
+        let err = msg.serialize_into(&mut buf).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ControlMessageTooLarge {
+                size,
+                max: HID_MSG_BUDGET
+            } if size == HID_MSG_BUDGET + 1
+        ));
+        assert_eq!(buf, vec![0xcc]);
+    }
+
+    #[test]
+    fn set_clipboard_truncates_to_control_msg_max_size() {
+        let msg = ControlMessage::SetClipboard(SetClipboard {
+            sequence: 7,
+            paste: true,
+            text: "a".repeat(CONTROL_MSG_MAX_SIZE),
+        });
+
+        let v = msg.serialize().unwrap();
+
+        assert_eq!(v.len(), CONTROL_MSG_MAX_SIZE);
+        assert_eq!(v[0], ControlMsgType::SetClipboard as u8);
+        assert_eq!(u64::from_be_bytes(v[1..9].try_into().unwrap()), 7);
+        assert_eq!(v[9], 1);
+        assert_eq!(
+            u32::from_be_bytes(v[10..14].try_into().unwrap()) as usize,
+            CONTROL_MSG_MAX_SIZE - 14
+        );
+        assert!(v[14..].iter().all(|b| *b == b'a'));
     }
 
     #[test]

@@ -17,14 +17,17 @@ use std::time::Duration;
 use crate::coalesce::{
     CoalescingWriter, DEFAULT_HARD_LIMIT, DEFAULT_WINDOW, DIRECT_GAMEPAD_BATCH_FRAMES,
 };
-use crate::control::message::{ControlMessage, InjectTouchEvent};
+use crate::control::message::{
+    AiConfig, AiQuery, ControlMessage, InjectScrollEvent, InjectTouchEvent,
+};
 use crate::error::{Error, Result, TransportWrite};
 use crate::hid::gamepad::GamepadHid;
 use crate::hid::keyboard::KeyboardHid;
 use crate::hid::mouse::MouseHid;
 use crate::hid::HidDevice;
 use crate::types::{
-    dpad_hat_value, GamepadAxis, GamepadButton, Modifiers, Scancode, HID_ID_GAMEPAD_FIRST,
+    dpad_hat_value, AndroidKeyAction, AndroidKeycode, ClipboardCopyKey, GamepadAxis, GamepadButton,
+    Modifiers, Scancode, TouchAction, TouchPointerId, HID_ID_GAMEPAD_FIRST, HID_ID_MOUSE,
 };
 
 /// Which HID devices the session should open. Touch events are always
@@ -341,9 +344,16 @@ impl<T: TransportWrite> HidSession<T> {
     /// coordinate `(x, y)`. Implemented via `INJECT_TOUCH_EVENT` — no
     /// UHID mouse device needs to be open.
     pub fn tap(&mut self, x: i32, y: i32) -> Result<()> {
-        let down = self.touch_msg(ACTION_DOWN, 0, x, y, 1.0);
+        self.tap_pointer(TouchPointerId::finger(0), x, y)
+    }
+
+    /// Press and release at one absolute coordinate with a typed scrcpy pointer
+    /// id.
+    pub fn tap_pointer(&mut self, pointer_id: TouchPointerId, x: i32, y: i32) -> Result<()> {
+        let pointer_id = pointer_id.value();
+        let down = self.touch_msg(ACTION_DOWN, pointer_id, x, y, 1.0);
         self.send(&down)?;
-        let up = self.touch_msg(ACTION_UP, 0, x, y, 0.0);
+        let up = self.touch_msg(ACTION_UP, pointer_id, x, y, 0.0);
         self.send(&up)?;
         Ok(())
     }
@@ -357,21 +367,34 @@ impl<T: TransportWrite> HidSession<T> {
         &mut self,
         from: (i32, i32),
         to: (i32, i32),
+        dur: Duration,
+        steps: u32,
+    ) -> Result<()> {
+        self.swipe_pointer(TouchPointerId::finger(0), from, to, dur, steps)
+    }
+
+    /// Linear-interpolate a swipe with a typed scrcpy pointer id.
+    pub fn swipe_pointer(
+        &mut self,
+        pointer_id: TouchPointerId,
+        from: (i32, i32),
+        to: (i32, i32),
         _dur: Duration,
         steps: u32,
     ) -> Result<()> {
+        let pointer_id = pointer_id.value();
         let steps = steps.max(2);
         let (x0, y0) = from;
         let (x1, y1) = to;
-        self.send(&self.touch_msg(ACTION_DOWN, 0, x0, y0, 1.0))?;
+        self.send(&self.touch_msg(ACTION_DOWN, pointer_id, x0, y0, 1.0))?;
         for i in 1..steps {
             let t = i as f32 / steps as f32;
             let x = (x0 as f32 + (x1 - x0) as f32 * t).round() as i32;
             let y = (y0 as f32 + (y1 - y0) as f32 * t).round() as i32;
-            self.send(&self.touch_msg(ACTION_MOVE, 0, x, y, 1.0))?;
+            self.send(&self.touch_msg(ACTION_MOVE, pointer_id, x, y, 1.0))?;
         }
-        self.send(&self.touch_msg(ACTION_MOVE, 0, x1, y1, 1.0))?;
-        self.send(&self.touch_msg(ACTION_UP, 0, x1, y1, 0.0))?;
+        self.send(&self.touch_msg(ACTION_MOVE, pointer_id, x1, y1, 1.0))?;
+        self.send(&self.touch_msg(ACTION_UP, pointer_id, x1, y1, 0.0))?;
         Ok(())
     }
 
@@ -711,6 +734,69 @@ impl<T: TransportWrite> HidSession<T> {
         Ok(())
     }
 
+    /// Send one relative UHID mouse motion report.
+    #[inline]
+    pub fn mouse_motion(&mut self, dx: i32, dy: i32, buttons_state: u8) -> Result<()> {
+        let mouse = self
+            .mouse
+            .as_ref()
+            .ok_or(Error::SessionLifecycle("mouse not open"))?;
+        let report = mouse.generate_input_from_motion(dx, dy, buttons_state);
+        self.transport
+            .push_uhid_input(report.hid_id, report.size, &report.data)?;
+        Ok(())
+    }
+
+    /// Send one UHID mouse button-state report.
+    #[inline]
+    pub fn mouse_buttons(&mut self, buttons_state: u8) -> Result<()> {
+        let mouse = self
+            .mouse
+            .as_ref()
+            .ok_or(Error::SessionLifecycle("mouse not open"))?;
+        let report = mouse.generate_input_from_click(buttons_state);
+        self.transport
+            .push_uhid_input(report.hid_id, report.size, &report.data)?;
+        Ok(())
+    }
+
+    /// Send one UHID mouse scroll report if the accumulated scroll reaches a
+    /// whole HID wheel unit.
+    #[inline]
+    pub fn mouse_scroll(&mut self, hscroll: f32, vscroll: f32) -> Result<bool> {
+        let mouse = self
+            .mouse
+            .as_mut()
+            .ok_or(Error::SessionLifecycle("mouse not open"))?;
+        let Some(report) = mouse.generate_input_from_scroll(hscroll, vscroll) else {
+            return Ok(false);
+        };
+        self.transport
+            .push_uhid_input(report.hid_id, report.size, &report.data)?;
+        Ok(true)
+    }
+
+    /// Send a batch of relative UHID mouse motion/button reports.
+    #[inline]
+    pub fn mouse_frame_batch(&mut self, frames: &[(i32, i32, u8)]) -> Result<usize> {
+        if frames.is_empty() {
+            return Ok(0);
+        }
+        if self.mouse.is_none() {
+            return Err(Error::SessionLifecycle("mouse not open"));
+        }
+        for &(dx, dy, buttons) in frames {
+            let report = self
+                .mouse
+                .as_ref()
+                .expect("mouse checked above")
+                .generate_input_from_motion(dx, dy, buttons);
+            self.transport
+                .push_uhid_input(HID_ID_MOUSE, report.size, &report.data)?;
+        }
+        Ok(frames.len())
+    }
+
     /// Access the underlying keyboard driver (for advanced key-level
     /// events not covered by the high-level helpers). Panics if the
     /// keyboard was not opened.
@@ -828,29 +914,91 @@ impl<T: TransportWrite> HidSession<T> {
         ))
     }
 
+    /// Inject a typed Android `KeyEvent.KEYCODE_*`.
+    pub fn inject_android_keycode(
+        &mut self,
+        action: u8,
+        keycode: AndroidKeycode,
+        repeat: u32,
+        metastate: u32,
+    ) -> Result<()> {
+        self.inject_keycode(action, keycode.value(), repeat, metastate)
+    }
+
+    /// Inject a fully typed Android key event.
+    pub fn inject_android_key_event(
+        &mut self,
+        action: AndroidKeyAction,
+        keycode: AndroidKeycode,
+        repeat: u32,
+        metastate: u32,
+    ) -> Result<()> {
+        self.inject_android_keycode(action.value(), keycode, repeat, metastate)
+    }
+
+    /// Press one typed Android keycode with action DOWN.
+    pub fn press_android_key(&mut self, keycode: AndroidKeycode) -> Result<()> {
+        self.inject_android_key_event(AndroidKeyAction::DOWN, keycode, 0, 0)
+    }
+
+    /// Release one typed Android keycode with action UP.
+    pub fn release_android_key(&mut self, keycode: AndroidKeycode) -> Result<()> {
+        self.inject_android_key_event(AndroidKeyAction::UP, keycode, 0, 0)
+    }
+
+    /// Press and release one raw Android `KeyEvent.KEYCODE_*`.
+    pub fn tap_android_keycode(&mut self, keycode: u32, metastate: u32) -> Result<()> {
+        self.inject_keycode(AndroidKeyAction::DOWN.value(), keycode, 0, metastate)?;
+        self.inject_keycode(AndroidKeyAction::UP.value(), keycode, 0, metastate)
+    }
+
+    /// Press and release one typed Android keycode.
+    pub fn tap_android_key(&mut self, keycode: AndroidKeycode) -> Result<()> {
+        self.tap_android_keycode(keycode.value(), 0)
+    }
+
+    /// Press and release one typed Android keycode with a metastate.
+    pub fn tap_android_key_with_metastate(
+        &mut self,
+        keycode: AndroidKeycode,
+        metastate: u32,
+    ) -> Result<()> {
+        self.tap_android_keycode(keycode.value(), metastate)
+    }
+
+    /// Send scrcpy BACK_OR_SCREEN_ON. If the screen is off, scrcpy wakes it;
+    /// otherwise it behaves like Back for the supplied key action.
+    pub fn back_or_screen_on(&mut self, action: AndroidKeyAction) -> Result<()> {
+        self.send(&ControlMessage::BackOrScreenOn(
+            crate::control::message::BackOrScreenOn {
+                action: action.value(),
+            },
+        ))
+    }
+
     /// Press the Home key.
     pub fn press_home(&mut self) -> Result<()> {
-        self.inject_keycode(0, 3, 0, 0) // KEYCODE_HOME = 3
+        self.press_android_key(AndroidKeycode::HOME)
     }
     /// Press the Back key.
     pub fn press_back(&mut self) -> Result<()> {
-        self.inject_keycode(0, 4, 0, 0) // KEYCODE_BACK = 4
+        self.press_android_key(AndroidKeycode::BACK)
     }
     /// Open the recents / app-switcher.
     pub fn open_recents(&mut self) -> Result<()> {
-        self.inject_keycode(0, 187, 0, 0) // KEYCODE_APP_SWITCH = 187
+        self.press_android_key(AndroidKeycode::APP_SWITCH)
     }
     /// Volume up.
     pub fn volume_up(&mut self) -> Result<()> {
-        self.inject_keycode(0, 24, 0, 0) // KEYCODE_VOLUME_UP = 24
+        self.press_android_key(AndroidKeycode::VOLUME_UP)
     }
     /// Volume down.
     pub fn volume_down(&mut self) -> Result<()> {
-        self.inject_keycode(0, 25, 0, 0) // KEYCODE_VOLUME_DOWN = 25
+        self.press_android_key(AndroidKeycode::VOLUME_DOWN)
     }
     /// Volume mute.
     pub fn volume_mute(&mut self) -> Result<()> {
-        self.inject_keycode(0, 164, 0, 0) // KEYCODE_VOLUME_MUTE = 164
+        self.press_android_key(AndroidKeycode::VOLUME_MUTE)
     }
 
     /// Expand the notification panel.
@@ -901,6 +1049,31 @@ impl<T: TransportWrite> HidSession<T> {
     pub fn reset_video(&mut self) -> Result<()> {
         self.send(&ControlMessage::ResetVideo)
     }
+
+    /// Configure the AI summary pipeline on an AI-enabled scrcpy server.
+    pub fn configure_ai(
+        &mut self,
+        flags: u8,
+        sample_interval_ms: u16,
+        feature_dim: u16,
+    ) -> Result<()> {
+        self.send(&ControlMessage::AiConfig(AiConfig {
+            flags,
+            sample_interval_ms,
+            feature_dim,
+        }))
+    }
+
+    /// Query the AI extension for summaries or stats since a timestamp.
+    pub fn query_ai(&mut self, since_timestamp_ms: u64) -> Result<()> {
+        self.send(&ControlMessage::AiQuery(AiQuery { since_timestamp_ms }))
+    }
+
+    /// Pause the AI summary pipeline on an AI-enabled scrcpy server.
+    pub fn pause_ai(&mut self) -> Result<()> {
+        self.send(&ControlMessage::AiPause)
+    }
+
     /// Launch an app by package name.
     pub fn launch_app(&mut self, name: &str) -> Result<()> {
         self.send(&ControlMessage::StartApp(
@@ -919,14 +1092,27 @@ impl<T: TransportWrite> HidSession<T> {
             },
         ))
     }
-    /// Request a clipboard read. **Phase 1 stub**: returns `Ok(())`
-    /// (the read itself is fire-and-forget; the dispatcher will
-    /// reply with an empty string for now). True server-reply
-    /// forwarding is a follow-up run.
+    /// Request a clipboard read with `copy_key = 0`.
+    ///
+    /// The clipboard payload is delivered on the server→host device-message
+    /// stream, not returned from this write-side helper. Use
+    /// [`crate::agent::AgentControlSession::get_clipboard_and_wait`] for the
+    /// combined request/read workflow.
     pub fn get_clipboard(&mut self) -> Result<()> {
+        self.request_clipboard_key(ClipboardCopyKey::NONE)
+    }
+
+    /// Request a clipboard read. `copy_key` follows scrcpy:
+    /// `0 = none`, `1 = copy`, `2 = cut`.
+    pub fn request_clipboard(&mut self, copy_key: u8) -> Result<()> {
         self.send(&ControlMessage::GetClipboard(
-            crate::control::message::GetClipboard { copy_key: 0 },
+            crate::control::message::GetClipboard { copy_key },
         ))
+    }
+
+    /// Request a clipboard read with a typed scrcpy copy-key selector.
+    pub fn request_clipboard_key(&mut self, copy_key: ClipboardCopyKey) -> Result<()> {
+        self.request_clipboard(copy_key.value())
     }
 
     /// Two quick taps at the same coordinate. Sends 4 touch events
@@ -1042,6 +1228,69 @@ impl<T: TransportWrite> HidSession<T> {
     ) -> Result<()> {
         let msg = self.touch_msg(action, pointer_id, x, y, pressure);
         self.send(&msg)
+    }
+
+    /// Low-level multi-touch inject with a typed Android motion action.
+    pub fn inject_touch_action(
+        &mut self,
+        action: TouchAction,
+        pointer_id: u64,
+        x: i32,
+        y: i32,
+        pressure: f32,
+    ) -> Result<()> {
+        self.inject_touch(action.value(), pointer_id, x, y, pressure)
+    }
+
+    /// Low-level multi-touch inject with typed Android action and scrcpy
+    /// pointer id.
+    pub fn inject_touch_pointer(
+        &mut self,
+        action: TouchAction,
+        pointer_id: TouchPointerId,
+        x: i32,
+        y: i32,
+        pressure: f32,
+    ) -> Result<()> {
+        self.inject_touch_action(action, pointer_id.value(), x, y, pressure)
+    }
+
+    /// Cancel one active touch pointer.
+    pub fn cancel_touch(&mut self, pointer_id: u64) -> Result<()> {
+        self.inject_touch_action(TouchAction::CANCEL, pointer_id, 0, 0, 0.0)
+    }
+
+    /// Cancel one active typed scrcpy touch pointer.
+    pub fn cancel_touch_pointer(&mut self, pointer_id: TouchPointerId) -> Result<()> {
+        self.cancel_touch(pointer_id.value())
+    }
+
+    /// Low-level absolute scroll injection using scrcpy `INJECT_SCROLL_EVENT`.
+    ///
+    /// `hscroll` and `vscroll` use scrcpy's raw scroll units. The serializer
+    /// normalizes them by 16.0 and clamps to the Android wire range.
+    pub fn inject_scroll(
+        &mut self,
+        x: i32,
+        y: i32,
+        hscroll: f32,
+        vscroll: f32,
+        buttons: u32,
+    ) -> Result<()> {
+        self.send(&ControlMessage::InjectScrollEvent(InjectScrollEvent {
+            x,
+            y,
+            screen_w: self.screen_w,
+            screen_h: self.screen_h,
+            hscroll,
+            vscroll,
+            buttons,
+        }))
+    }
+
+    /// Scroll at an absolute screen coordinate with no pressed mouse buttons.
+    pub fn scroll(&mut self, x: i32, y: i32, hscroll: f32, vscroll: f32) -> Result<()> {
+        self.inject_scroll(x, y, hscroll, vscroll, 0)
     }
 
     /// Borrow a multi-touch handle backed by this session. Cannot

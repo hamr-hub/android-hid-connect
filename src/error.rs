@@ -63,6 +63,10 @@ pub enum Error {
     /// already joined).
     #[error("hid dispatcher not running: {0}")]
     DispatcherDown(&'static str),
+
+    /// An agent wait operation timed out while waiting for a device reply.
+    #[error("agent wait timed out: {0}")]
+    AgentTimeout(&'static str),
 }
 
 /// Convenience alias for `Result<T, Error>`.

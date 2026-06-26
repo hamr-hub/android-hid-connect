@@ -1,10 +1,14 @@
-//! Integration tests for the 22 AI intent methods on `HidSession`.
+//! Integration tests for AI/agent intent methods on `HidSession`.
 //! Each intent is verified by inspecting the wire bytes on a
 //! `MockTransport` to confirm the correct underlying `ControlMessage`
 //! (or sequence thereof) was emitted.
 
 use android_hid_connect::session::{HidSession, OpenRequest};
 use android_hid_connect::transport::MockTransport;
+use android_hid_connect::{
+    AndroidKeyAction, AndroidKeycode, ClipboardCopyKey, AI_FLAG_FEATURES, AI_FLAG_KEYFRAMES,
+    AI_FLAG_MOTION, AI_FLAG_OBJECTS, AI_FLAG_TEXT,
+};
 
 const TAG_TOUCH: u8 = 2;
 const TAG_UHID_DESTROY: u8 = 14;
@@ -61,9 +65,15 @@ fn find_msg_with_tag(bytes: &[u8], tag: u8) -> Option<&[u8]> {
                     2 + name_len
                 }
                 // Tag-only (1-byte) messages
-                4 | 5 | 6 | 7 | 8 | 11 | 15 | 17 | 18 | 19 | 20 => 1,
+                5 | 6 | 7 | 11 | 15 | 17 | 18 | 19 | 20 => 1,
+                3 => 21, // INJECT_SCROLL_EVENT
+                4 => 2,  // BACK_OR_SCREEN_ON: tag + action
+                8 => 2,  // GET_CLIPBOARD: tag + copy_key
                 10 => 2, // SET_DISPLAY_POWER: tag + on(1)
                 21 => 5, // RESIZE_DISPLAY: tag + width(2) + height(2)
+                22 => 6, // AI_CONFIG: tag + flags(1) + sample_interval(2) + feature_dim(2)
+                23 => 9, // AI_QUERY: tag + since_timestamp_ms(8)
+                24 => 1, // AI_PAUSE: tag only
                 _ => break,
             };
             if i + len <= bytes.len() {
@@ -103,6 +113,25 @@ fn run_one<F: FnOnce(&mut HidSession<MockTransport>)>(f: F) -> Vec<u8> {
     f(&mut s);
     s.close().unwrap();
     s.into_inner().into_bytes()
+}
+
+fn inject_key_events(bytes: &[u8]) -> Vec<(u8, u32, u32, u32)> {
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i + 14 <= bytes.len() {
+        if bytes[i] == 0 {
+            found.push((
+                bytes[i + 1],
+                u32::from_be_bytes([bytes[i + 2], bytes[i + 3], bytes[i + 4], bytes[i + 5]]),
+                u32::from_be_bytes([bytes[i + 6], bytes[i + 7], bytes[i + 8], bytes[i + 9]]),
+                u32::from_be_bytes([bytes[i + 10], bytes[i + 11], bytes[i + 12], bytes[i + 13]]),
+            ));
+            i += 14;
+        } else {
+            i += 1;
+        }
+    }
+    found
 }
 
 // === single-message intents ===
@@ -175,6 +204,40 @@ fn volume_keys_use_correct_keycodes() {
 }
 
 #[test]
+fn typed_android_keycodes_emit_inject_keycode() {
+    let bytes = run_one(|s| {
+        s.press_android_key(AndroidKeycode::POWER).unwrap();
+        s.inject_android_key_event(AndroidKeyAction::UP, AndroidKeycode::ENTER, 2, 3)
+            .unwrap();
+        s.release_android_key(AndroidKeycode::MENU).unwrap();
+    });
+    let expected = [(0u8, 26u32, 0u32, 0u32), (1, 66, 2, 3), (1, 82, 0, 0)];
+    assert_eq!(inject_key_events(&bytes), expected);
+}
+
+#[test]
+fn tap_android_key_emits_down_then_up() {
+    let bytes = run_one(|s| {
+        s.tap_android_key_with_metastate(AndroidKeycode::ENTER, 3)
+            .unwrap();
+        s.tap_android_keycode(82, 0).unwrap();
+    });
+
+    assert_eq!(
+        inject_key_events(&bytes),
+        vec![(0, 66, 0, 3), (1, 66, 0, 3), (0, 82, 0, 0), (1, 82, 0, 0)]
+    );
+}
+
+#[test]
+fn back_or_screen_on_emits_action_payload() {
+    let bytes = run_one(|s| {
+        s.back_or_screen_on(AndroidKeyAction::UP).unwrap();
+    });
+    assert_eq!(find_msg_with_tag(&bytes, 4), Some(&[4, 1][..]));
+}
+
+#[test]
 fn panel_intents_emit_tag_only() {
     let bytes = run_one(|s| {
         s.show_notifications().unwrap();
@@ -226,6 +289,27 @@ fn misc_intents() {
 }
 
 #[test]
+fn ai_extension_helpers_emit_config_query_pause() {
+    let flags =
+        AI_FLAG_KEYFRAMES | AI_FLAG_FEATURES | AI_FLAG_MOTION | AI_FLAG_OBJECTS | AI_FLAG_TEXT;
+    let bytes = run_one(|s| {
+        s.configure_ai(flags, 16, 64).unwrap();
+        s.query_ai(0x0102_0304_0506_0708).unwrap();
+        s.pause_ai().unwrap();
+    });
+
+    let config = find_msg_with_tag(&bytes, 22).expect("AI_CONFIG frame");
+    assert_eq!(config, &[22, flags, 0, 16, 0, 64]);
+    let query = find_msg_with_tag(&bytes, 23).expect("AI_QUERY frame");
+    assert_eq!(query[0], 23);
+    assert_eq!(
+        u64::from_be_bytes(query[1..9].try_into().unwrap()),
+        0x0102_0304_0506_0708
+    );
+    assert_eq!(find_msg_with_tag(&bytes, 24), Some(&[24][..]));
+}
+
+#[test]
 fn set_clipboard_emits_set_clipboard() {
     let bytes = run_one(|s| {
         s.set_clipboard("hello world", true).unwrap();
@@ -250,6 +334,44 @@ fn get_clipboard_emits_get_clipboard() {
     });
     assert_eq!(bytes[0], 8); // tag 8 (GetClipboard)
     assert_eq!(bytes[1], 0); // copy_key = 0
+}
+
+#[test]
+fn request_clipboard_uses_requested_copy_key() {
+    let bytes = run_one(|s| {
+        s.request_clipboard(2).unwrap();
+    });
+    assert_eq!(bytes[0], 8); // tag 8 (GetClipboard)
+    assert_eq!(bytes[1], 2); // copy_key = cut
+}
+
+#[test]
+fn typed_clipboard_copy_key_emits_get_clipboard() {
+    let bytes = run_one(|s| {
+        s.request_clipboard_key(ClipboardCopyKey::COPY).unwrap();
+    });
+    assert_eq!(bytes[0], 8); // tag 8 (GetClipboard)
+    assert_eq!(bytes[1], 1); // copy_key = copy
+}
+
+#[test]
+fn scroll_emits_inject_scroll_event() {
+    let bytes = run_one(|s| {
+        s.set_screen_size(720, 1280);
+        s.scroll(100, 200, 0.0, -16.0).unwrap();
+    });
+    let frame = find_msg_with_tag(&bytes, 3).expect("scroll frame");
+    assert_eq!(frame.len(), 21);
+    assert_eq!(i32::from_be_bytes(frame[1..5].try_into().unwrap()), 100);
+    assert_eq!(i32::from_be_bytes(frame[5..9].try_into().unwrap()), 200);
+    assert_eq!(u16::from_be_bytes(frame[9..11].try_into().unwrap()), 720);
+    assert_eq!(u16::from_be_bytes(frame[11..13].try_into().unwrap()), 1280);
+    assert_eq!(u16::from_be_bytes(frame[13..15].try_into().unwrap()), 0);
+    assert_eq!(
+        u16::from_be_bytes(frame[15..17].try_into().unwrap()),
+        0x8000
+    );
+    assert_eq!(u32::from_be_bytes(frame[17..21].try_into().unwrap()), 0);
 }
 
 // === composite intents ===

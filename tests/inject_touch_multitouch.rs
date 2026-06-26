@@ -5,6 +5,7 @@
 
 use android_hid_connect::session::{HidSession, OpenRequest};
 use android_hid_connect::transport::MockTransport;
+use android_hid_connect::{TouchAction, TouchPointerId, POINTER_ID_VIRTUAL_FINGER};
 
 /// Type tag of `INJECT_TOUCH_EVENT` (= 2). Matches `ControlMsgType::InjectTouchEvent`.
 const TAG_TOUCH: u8 = 2;
@@ -122,6 +123,25 @@ fn inject_touch_carries_pointer_id() {
 }
 
 #[test]
+fn typed_touch_action_and_cancel_emit_expected_actions() {
+    let mut s = HidSession::open(MockTransport::new(), OpenRequest::none()).unwrap();
+    s.inject_touch_action(TouchAction::DOWN, 4, 100, 200, 1.0)
+        .unwrap();
+    s.inject_touch_action(TouchAction::MOVE, 4, 150, 250, 1.0)
+        .unwrap();
+    s.cancel_touch(4).unwrap();
+    s.close().unwrap();
+
+    let frames = parse_touch_frames(&s.into_inner().into_bytes());
+    assert_eq!(frames.len(), 3);
+    assert_eq!(frames[0].action, 0);
+    assert_eq!(frames[1].action, 2);
+    assert_eq!(frames[2].action, 3);
+    assert!(frames.iter().all(|f| f.pointer_id == 4));
+    assert_eq!((frames[2].x, frames[2].y), (0, 0));
+}
+
+#[test]
 fn ten_point_lifecycle_via_inject_touch() {
     let mut s = HidSession::open(MockTransport::new(), OpenRequest::kbd_only()).unwrap();
     s.set_screen_size(1080, 2400);
@@ -169,6 +189,33 @@ fn inject_touch_serializes_pointer_id_big_endian() {
     let frames = parse_touch_frames(&bytes);
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].pointer_id, 0x0102030405060708);
+}
+
+#[test]
+fn typed_touch_pointer_id_serializes_scrcpy_reserved_values() {
+    let mut s = HidSession::open(MockTransport::new(), OpenRequest::none()).unwrap();
+    s.set_screen_size(1080, 2400);
+    s.tap_pointer(TouchPointerId::VIRTUAL_FINGER, 540, 1200)
+        .unwrap();
+    s.inject_touch_pointer(
+        TouchAction::CANCEL,
+        TouchPointerId::VIRTUAL_FINGER,
+        0,
+        0,
+        0.0,
+    )
+    .unwrap();
+    s.close().unwrap();
+    let bytes = s.into_inner().into_bytes();
+    let frames = parse_touch_frames(&bytes);
+
+    assert_eq!(frames.len(), 3);
+    assert!(frames
+        .iter()
+        .all(|frame| frame.pointer_id == POINTER_ID_VIRTUAL_FINGER));
+    assert_eq!(frames[0].action, TouchAction::DOWN.value());
+    assert_eq!(frames[1].action, TouchAction::UP.value());
+    assert_eq!(frames[2].action, TouchAction::CANCEL.value());
 }
 
 #[test]

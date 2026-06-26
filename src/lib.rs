@@ -47,10 +47,14 @@
 #![deny(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
+pub mod agent;
 pub mod ai;
+#[cfg(feature = "tokio")]
+pub mod async_device;
 pub mod client;
 pub mod coalesce;
 pub mod control;
+pub mod device;
 pub mod error;
 pub mod hid;
 pub mod multitouch;
@@ -58,11 +62,49 @@ pub mod session;
 pub mod transport;
 pub mod types;
 
+pub use agent::{
+    AgentAction, AgentControlCloseReport, AgentControlClosed, AgentControlCommandCloseReport,
+    AgentControlSession, AgentObjectSelector, AgentPlanBoundedPrefix, AgentPlanBoundedPrefixStop,
+    AgentPlanSummary, AgentPoint, AgentRect, AgentScrollFrame, AgentTargetSelector,
+    AgentTouchFrame, DEFAULT_AGENT_COMMAND_BOUND,
+};
+#[cfg(feature = "tokio")]
+pub use async_device::{
+    read_device_event_async, read_device_message_async, read_scrcpy_control_prefix_async,
+    spawn_async_device_event_receiver, spawn_async_device_message_receiver,
+    spawn_async_latest_frame_summary_receiver, spawn_default_async_device_event_receiver,
+    spawn_default_async_device_message_receiver, AsyncDeviceMessagePump,
+    AsyncDeviceMessageReceiver, AsyncLatestFrameSummaryReceiver,
+};
+pub use client::{
+    AndroidKeyFrame, AndroidKeyFrameBatcher, GamepadFrameBatcher, KeyboardChordFrame,
+    KeyboardFrame, KeyboardFrameBatcher, MouseFrame, MouseFrameBatcher, PackedGamepadFrameBatcher,
+    ScrollFrame, ScrollFrameBatcher, TouchFrame, TouchFrameBatcher, ANDROID_KEY_BATCH_FRAMES,
+    GAMEPAD_BATCH_FRAMES, KEYBOARD_BATCH_FRAMES, KEYBOARD_CHORD_EDGES, KEYBOARD_CHORD_KEYS,
+    MOUSE_BATCH_FRAMES, SCROLL_BATCH_FRAMES, TOUCH_BATCH_FRAMES,
+};
+pub use control::{
+    AiConfig, AiQuery, AI_FLAG_FEATURES, AI_FLAG_KEYFRAMES, AI_FLAG_MOTION, AI_FLAG_OBJECTS,
+    AI_FLAG_TEXT,
+};
+pub use device::{
+    read_device_event, read_device_message, read_scrcpy_control_prefix,
+    spawn_default_device_event_receiver, spawn_default_device_message_receiver,
+    spawn_device_event_receiver, spawn_device_message_receiver,
+    spawn_latest_frame_summary_receiver, DeviceEvent, DeviceMessage, DeviceMessagePump,
+    DeviceMessageReceiver, DeviceReadError, LatestFrameSummaryBoundary,
+    LatestFrameSummaryObservation, LatestFrameSummaryReceiver, LatestFrameSummarySnapshot,
+    ScrcpyControlPrefix,
+};
 pub use error::{Error, Result, TransportWrite};
 pub use hid::gamepad::GamepadHid;
 pub use hid::keyboard::KeyboardHid;
 pub use hid::mouse::MouseHid;
 pub use hid::{HidDevice, HidReport};
+pub use session::{GamepadFrameRaw, HidSession, OpenRequest};
+pub use transport::{open_tcp, send_batch, send_one};
 pub use types::{
-    GamepadAxis, GamepadButton, Modifiers, MouseButton, Scancode, HID_ID_KEYBOARD, HID_ID_MOUSE,
+    AndroidKeyAction, AndroidKeycode, ClipboardCopyKey, GamepadAxis, GamepadButton, Modifiers,
+    MouseButton, Scancode, TouchAction, TouchPointerId, HID_ID_KEYBOARD, HID_ID_MOUSE,
+    POINTER_ID_GENERIC_FINGER, POINTER_ID_MOUSE, POINTER_ID_VIRTUAL_FINGER,
 };

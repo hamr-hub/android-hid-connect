@@ -653,11 +653,7 @@ fn try_send_frame_batch_unchecked_backpressure() {
         "expected back-pressure-induced drops for bounded channel"
     );
 
-    let uhid_inputs = transport
-        .bytes
-        .iter()
-        .filter(|b| **b == TAG_UHID_INPUT)
-        .count();
+    let uhid_inputs = count_uhid_inputs(&transport.bytes);
     assert_eq!(
         uhid_inputs, sent,
         "successful unchecked batches should become UHID_INPUT frames"

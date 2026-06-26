@@ -482,6 +482,179 @@ impl std::ops::BitXor for Modifiers {
     }
 }
 
+/// Android `KeyEvent.KEYCODE_*` value for scrcpy `INJECT_KEYCODE`.
+///
+/// This is separate from [`Scancode`]: scancodes are USB HID keyboard usage
+/// IDs, while Android keycodes are framework-level constants consumed by
+/// scrcpy's non-UHID `INJECT_KEYCODE` control message.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct AndroidKeycode(pub u32);
+
+impl AndroidKeycode {
+    pub const HOME: Self = Self(3);
+    pub const BACK: Self = Self(4);
+    pub const DPAD_UP: Self = Self(19);
+    pub const DPAD_DOWN: Self = Self(20);
+    pub const DPAD_LEFT: Self = Self(21);
+    pub const DPAD_RIGHT: Self = Self(22);
+    pub const VOLUME_UP: Self = Self(24);
+    pub const VOLUME_DOWN: Self = Self(25);
+    pub const POWER: Self = Self(26);
+    pub const ENTER: Self = Self(66);
+    pub const MENU: Self = Self(82);
+    pub const VOLUME_MUTE: Self = Self(164);
+    pub const APP_SWITCH: Self = Self(187);
+
+    #[inline]
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<AndroidKeycode> for u32 {
+    fn from(keycode: AndroidKeycode) -> Self {
+        keycode.0
+    }
+}
+
+/// Android `KeyEvent.ACTION_*` value for scrcpy `INJECT_KEYCODE`.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct AndroidKeyAction(pub u8);
+
+impl AndroidKeyAction {
+    pub const DOWN: Self = Self(0);
+    pub const UP: Self = Self(1);
+    pub const MULTIPLE: Self = Self(2);
+
+    #[inline]
+    pub const fn new(raw: u8) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<AndroidKeyAction> for u8 {
+    fn from(action: AndroidKeyAction) -> Self {
+        action.0
+    }
+}
+
+/// scrcpy `GET_CLIPBOARD` copy-key selector.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ClipboardCopyKey(pub u8);
+
+impl ClipboardCopyKey {
+    /// Do not ask Android to copy or cut selection before reading clipboard.
+    pub const NONE: Self = Self(0);
+    /// Ask Android to copy current selection before reading clipboard.
+    pub const COPY: Self = Self(1);
+    /// Ask Android to cut current selection before reading clipboard.
+    pub const CUT: Self = Self(2);
+
+    #[inline]
+    pub const fn new(raw: u8) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<ClipboardCopyKey> for u8 {
+    fn from(copy_key: ClipboardCopyKey) -> Self {
+        copy_key.0
+    }
+}
+
+/// Android `MotionEvent.ACTION_*` value for scrcpy touch injection.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TouchAction(pub u8);
+
+impl TouchAction {
+    pub const DOWN: Self = Self(0);
+    pub const UP: Self = Self(1);
+    pub const MOVE: Self = Self(2);
+    pub const CANCEL: Self = Self(3);
+
+    #[inline]
+    pub const fn new(raw: u8) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<TouchAction> for u8 {
+    fn from(action: TouchAction) -> Self {
+        action.0
+    }
+}
+
+/// scrcpy reserved pointer id for mouse-originated injected touch events.
+pub const POINTER_ID_MOUSE: u64 = u64::MAX;
+/// scrcpy reserved pointer id for generic finger-originated injected touch events.
+pub const POINTER_ID_GENERIC_FINGER: u64 = u64::MAX - 1;
+/// scrcpy reserved pointer id for virtual-finger injected touch events.
+pub const POINTER_ID_VIRTUAL_FINGER: u64 = u64::MAX - 2;
+
+/// Typed touch pointer id for scrcpy `INJECT_TOUCH_EVENT`.
+///
+/// Android multi-touch gestures normally use small ids such as `0..10`; scrcpy
+/// also reserves high unsigned ids for mouse/generic/virtual finger semantics.
+/// This wrapper keeps those special ids named and avoids raw `u64::MAX - n`
+/// constants in agent plans.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TouchPointerId(pub u64);
+
+impl TouchPointerId {
+    /// scrcpy `SC_POINTER_ID_MOUSE`.
+    pub const MOUSE: Self = Self(POINTER_ID_MOUSE);
+    /// scrcpy `SC_POINTER_ID_GENERIC_FINGER`.
+    pub const GENERIC_FINGER: Self = Self(POINTER_ID_GENERIC_FINGER);
+    /// scrcpy `SC_POINTER_ID_VIRTUAL_FINGER`.
+    pub const VIRTUAL_FINGER: Self = Self(POINTER_ID_VIRTUAL_FINGER);
+
+    #[inline]
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn finger(id: u64) -> Self {
+        Self(id)
+    }
+
+    #[inline]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<TouchPointerId> for u64 {
+    fn from(pointer_id: TouchPointerId) -> Self {
+        pointer_id.0
+    }
+}
+
 /// Mouse buttons. Values match the bit positions in byte 0 of the mouse
 /// HID report.
 #[repr(u8)]
@@ -599,6 +772,55 @@ mod tests {
         assert_eq!(Modifiers::RSHIFT.bits(), 0x20);
         assert_eq!(Modifiers::RALT.bits(), 0x40);
         assert_eq!(Modifiers::RGUI.bits(), 0x80);
+    }
+
+    #[test]
+    fn android_keycode_constants_match_android_values() {
+        assert_eq!(AndroidKeycode::HOME.value(), 3);
+        assert_eq!(u32::from(AndroidKeycode::BACK), 4);
+        assert_eq!(AndroidKeycode::APP_SWITCH.value(), 187);
+        assert_eq!(AndroidKeycode::new(66), AndroidKeycode::ENTER);
+    }
+
+    #[test]
+    fn android_key_action_constants_match_android_values() {
+        assert_eq!(AndroidKeyAction::DOWN.value(), 0);
+        assert_eq!(u8::from(AndroidKeyAction::UP), 1);
+        assert_eq!(AndroidKeyAction::MULTIPLE.value(), 2);
+        assert_eq!(AndroidKeyAction::new(1), AndroidKeyAction::UP);
+    }
+
+    #[test]
+    fn clipboard_copy_key_constants_match_scrcpy_values() {
+        assert_eq!(ClipboardCopyKey::NONE.value(), 0);
+        assert_eq!(u8::from(ClipboardCopyKey::COPY), 1);
+        assert_eq!(ClipboardCopyKey::CUT.value(), 2);
+        assert_eq!(ClipboardCopyKey::new(2), ClipboardCopyKey::CUT);
+    }
+
+    #[test]
+    fn touch_action_constants_match_android_values() {
+        assert_eq!(TouchAction::DOWN.value(), 0);
+        assert_eq!(u8::from(TouchAction::UP), 1);
+        assert_eq!(TouchAction::MOVE.value(), 2);
+        assert_eq!(TouchAction::new(3), TouchAction::CANCEL);
+    }
+
+    #[test]
+    fn touch_pointer_id_constants_match_scrcpy_values() {
+        assert_eq!(POINTER_ID_MOUSE, u64::MAX);
+        assert_eq!(POINTER_ID_GENERIC_FINGER, u64::MAX - 1);
+        assert_eq!(POINTER_ID_VIRTUAL_FINGER, u64::MAX - 2);
+        assert_eq!(TouchPointerId::MOUSE.value(), POINTER_ID_MOUSE);
+        assert_eq!(
+            u64::from(TouchPointerId::GENERIC_FINGER),
+            POINTER_ID_GENERIC_FINGER
+        );
+        assert_eq!(
+            TouchPointerId::VIRTUAL_FINGER,
+            TouchPointerId::new(POINTER_ID_VIRTUAL_FINGER)
+        );
+        assert_eq!(TouchPointerId::finger(3).value(), 3);
     }
 
     #[test]

@@ -25,14 +25,13 @@
 //! Exits non-zero on any assertion failure.
 
 use std::env;
-use std::io::Read;
-use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use android_hid_connect::control::message::{
     ControlMessage, GetClipboard, InjectKeycode, InjectScrollEvent, InjectText, InjectTouchEvent,
     ResizeDisplay, SetClipboard, SetDisplayPower, StartApp, UhidCreate, UhidDestroy, UhidInput,
 };
+use android_hid_connect::device::{read_device_message, read_scrcpy_control_prefix, DeviceMessage};
 use android_hid_connect::transport::{open_tcp, send_one};
 use android_hid_connect::types::{
     GamepadAxis, GamepadButton, Modifiers, MouseButton, HID_MAX_SIZE,
@@ -65,22 +64,6 @@ impl Stats {
     }
 }
 
-/// Read the next device-msg frame and parse it. Returns the parsed type
-/// tag and payload slice.
-fn read_device_msg(stream: &mut TcpStream) -> std::io::Result<(u8, Vec<u8>)> {
-    let mut type_byte = [0u8; 1];
-    stream.read_exact(&mut type_byte)?;
-    let ty = type_byte[0];
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    let mut payload = vec![0u8; len];
-    if len > 0 {
-        stream.read_exact(&mut payload)?;
-    }
-    Ok((ty, payload))
-}
-
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = env::args().collect();
     let port: u16 = args
@@ -104,29 +87,14 @@ fn main() -> std::process::ExitCode {
     // ---- 1. read dummy byte + raw 64-byte device meta ----
     // The device-meta prefix is OUT-OF-BAND, NOT a device_msg frame —
     // see scrcpy DesktopConnection.sendDeviceMeta.
-    let mut dummy = [0u8; 1];
-    match stream.read(&mut dummy) {
-        Ok(1) => stats.ok(&format!("received dummy byte {:#x}", dummy[0])),
-        Ok(n) => {
-            stats.fail += 1;
-            println!("  FAIL  expected 1 dummy byte, got {n}");
+    match read_scrcpy_control_prefix(&mut stream) {
+        Ok(prefix) => {
+            stats.ok(&format!("received dummy byte {:#x}", prefix.dummy_byte));
+            stats.ok(&format!("device meta (raw 64B): {}", prefix.device_name));
         }
         Err(e) => {
             stats.fail += 1;
-            println!("  FAIL  dummy-byte read: {e}");
-        }
-    }
-
-    let mut device_meta = vec![0u8; 64];
-    match stream.read_exact(&mut device_meta) {
-        Ok(_) => {
-            let name_len = device_meta.iter().position(|&b| b == 0).unwrap_or(64);
-            let name = String::from_utf8_lossy(&device_meta[..name_len]).to_string();
-            stats.ok(&format!("device meta (raw 64B): {name}"));
-        }
-        Err(e) => {
-            stats.fail += 1;
-            println!("  FAIL  device meta read: {e}");
+            println!("  FAIL  scrcpy control prefix read: {e}");
         }
     }
 
@@ -306,42 +274,24 @@ fn main() -> std::process::ExitCode {
     let start = Instant::now();
     let mut server_msgs = 0;
     while start.elapsed() < Duration::from_secs(5) {
-        match read_device_msg(&mut stream) {
-            Ok((ty, payload)) => {
+        match read_device_message(&mut stream) {
+            Ok(msg) => {
                 server_msgs += 1;
-                match ty {
-                    0 => {
-                        // CLIPBOARD
-                        let txt = String::from_utf8_lossy(&payload).to_string();
+                match msg {
+                    DeviceMessage::Clipboard(txt) => {
                         println!(
                             "  RECV  DEVICE_MSG_CLIPBOARD len={} text={txt:?}",
-                            payload.len()
+                            txt.len()
                         );
                     }
-                    1 => {
-                        // ACK_CLIPBOARD: u64 sequence
-                        if payload.len() >= 8 {
-                            let seq = u64::from_be_bytes(payload[..8].try_into().unwrap());
-                            println!("  RECV  DEVICE_MSG_ACK_CLIPBOARD seq={seq}");
-                        } else {
-                            println!("  RECV  DEVICE_MSG_ACK_CLIPBOARD (short)");
-                        }
+                    DeviceMessage::AckClipboard { sequence } => {
+                        println!("  RECV  DEVICE_MSG_ACK_CLIPBOARD seq={sequence}");
                     }
-                    2 => {
-                        // UHID_OUTPUT: u16 id + u16 size + [data]
-                        if payload.len() >= 4 {
-                            let id = u16::from_be_bytes(payload[..2].try_into().unwrap());
-                            let sz = u16::from_be_bytes(payload[2..4].try_into().unwrap()) as usize;
-                            let data = &payload[4..4 + sz.min(payload.len().saturating_sub(4))];
-                            println!(
-                                "  RECV  DEVICE_MSG_UHID_OUTPUT id={id} size={sz} data={data:02x?}"
-                            );
-                        } else {
-                            println!("  RECV  DEVICE_MSG_UHID_OUTPUT (short)");
-                        }
-                    }
-                    _ => {
-                        println!("  RECV  DEVICE_MSG unknown type={ty}");
+                    DeviceMessage::UhidOutput { id, data } => {
+                        println!(
+                            "  RECV  DEVICE_MSG_UHID_OUTPUT id={id} size={} data={data:02x?}",
+                            data.len()
+                        );
                     }
                 }
             }

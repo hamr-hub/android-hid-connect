@@ -69,6 +69,13 @@ pub enum Error {
     AgentTimeout(&'static str),
 }
 
+impl Error {
+    /// Convenience: the maximum valid pointer id (10 - 1).
+    pub const fn pointer_id_max() -> u64 {
+        crate::multitouch::MAX_POINTERS - 1
+    }
+}
+
 /// Convenience alias for `Result<T, Error>`.
 pub type Result<T> = std::result::Result<T, Error>;
 

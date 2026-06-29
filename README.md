@@ -6,6 +6,24 @@ control socket.
 
 [scrcpy]: https://github.com/Genymobile/scrcpy
 
+## Documentation
+
+| 文档 | 用途 |
+| ---- | ---- |
+| [`README.md`](README.md) | 协议概览 + 高级 API + 入门(本文件)|
+| [`AGENTS.md`](AGENTS.md) | 协作约定(目录规则 + 允许/禁止 + AI agent meta-rule)|
+| [`ACCEPTANCE.md`](ACCEPTANCE.md) | AC 验收点 + 真机回归记录 + 历史 bug |
+| [`CHANGELOG.md`](CHANGELOG.md) | 变更日志(release-please 自动读)|
+| [`docs/INDEX.md`](docs/INDEX.md) | 全部专题文档导航 |
+| [`docs/architecture.md`](docs/architecture.md) | 模块分层 + 线程模型 + 纯度边界 |
+| [`docs/wire-format.md`](docs/wire-format.md) | 22 control_msg + 3 HID report + 3 device_msg 字节速查 |
+| [`docs/scrcpy-protocol-compatibility.md`](docs/scrcpy-protocol-compatibility.md) | scrcpy v2.7 byte-exact 契约 + 跟踪流程 |
+| [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) | LLM / agent runtime 集成指南 |
+| [`docs/development.md`](docs/development.md) | 本地开发循环 + 真机 E2E + CI 矩阵 |
+| [`docs/comparison-with-handsets.md`](docs/comparison-with-handsets.md) | 与 `handsets` 仓库的多维度对比 |
+
+第一次接触本 crate:先读本文件 → 然后 [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) 或 [`docs/architecture.md`](docs/architecture.md)。
+
 ## What this crate does
 
 scrcpy (and any compatible `scrcpy-server` running on an Android

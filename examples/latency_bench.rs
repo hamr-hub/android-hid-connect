@@ -30,7 +30,6 @@ use android_hid_connect::control::message::{
 use android_hid_connect::hid::gamepad::GamepadHid;
 use android_hid_connect::hid::keyboard::KeyboardHid;
 use android_hid_connect::types::{GamepadAxis, Modifiers};
-use android_hid_connect::HidDevice;
 
 const DEFAULT_PORT: u16 = 27183;
 const DEFAULT_ITERATIONS: u32 = 100;

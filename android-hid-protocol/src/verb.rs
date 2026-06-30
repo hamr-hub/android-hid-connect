@@ -28,7 +28,9 @@ pub enum Verb {
     Screenshot,
     Stream,
     StreamH264,
+    StreamH265,
     StreamTileJpeg,
+    StreamTileH265,
     Keyframe,
 
     // ---- Input ----
@@ -50,6 +52,22 @@ pub enum Verb {
     // ---- Composites ----
     TapAndDump,
     TapAndSettle,
+
+    // ---- v2 atomic (UHID + a11y) ----
+    /// Resolve selector on a11y tree, take center, tap, return dump.
+    SelectAndTap,
+    /// Project AI detection box onto a11y tree, tap the matched node.
+    AiAnchorTap,
+    /// Type text then wait_for_text in one call.
+    TypeAndWait,
+    /// Retry node_click until a11y tree contains the target text.
+    ClickUntilText,
+    /// dump_active + H.265 keyframe in one response.
+    DumpAndFrame,
+    /// Force H.265 keyframe and wait until it's been emitted.
+    KeyframeAndWait,
+    /// Pull H.265 VPS/SPS/PPS once.
+    HevcParamSets,
 
     // ---- State ----
     State,
@@ -132,7 +150,9 @@ impl Verb {
             Self::Screenshot => "screenshot",
             Self::Stream => "stream",
             Self::StreamH264 => "stream_h264",
+            Self::StreamH265 => "stream_h265",
             Self::StreamTileJpeg => "stream_tilejpeg",
+            Self::StreamTileH265 => "stream_tile_h265",
             Self::Keyframe => "keyframe",
             // Input
             Self::Tap => "tap",
@@ -151,6 +171,14 @@ impl Verb {
             // Composites
             Self::TapAndDump => "tap_and_dump",
             Self::TapAndSettle => "tap_and_settle",
+            // v2 atomic
+            Self::SelectAndTap => "select_and_tap",
+            Self::AiAnchorTap => "ai_anchor_tap",
+            Self::TypeAndWait => "type_and_wait",
+            Self::ClickUntilText => "click_until_text",
+            Self::DumpAndFrame => "dump_and_frame",
+            Self::KeyframeAndWait => "keyframe_and_wait",
+            Self::HevcParamSets => "hevc_param_sets",
             // State
             Self::State => "state",
             Self::StateWatch => "state_watch",
@@ -215,7 +243,9 @@ impl Verb {
             "screenshot" => Self::Screenshot,
             "stream" => Self::Stream,
             "stream_h264" => Self::StreamH264,
+            "stream_h265" => Self::StreamH265,
             "stream_tilejpeg" => Self::StreamTileJpeg,
+            "stream_tile_h265" => Self::StreamTileH265,
             "keyframe" => Self::Keyframe,
             "tap" => Self::Tap,
             "swipe" => Self::Swipe,
@@ -231,6 +261,13 @@ impl Verb {
             "wait_for_activity" => Self::WaitForActivity,
             "tap_and_dump" => Self::TapAndDump,
             "tap_and_settle" => Self::TapAndSettle,
+            "select_and_tap" => Self::SelectAndTap,
+            "ai_anchor_tap" => Self::AiAnchorTap,
+            "type_and_wait" => Self::TypeAndWait,
+            "click_until_text" => Self::ClickUntilText,
+            "dump_and_frame" => Self::DumpAndFrame,
+            "keyframe_and_wait" => Self::KeyframeAndWait,
+            "hevc_param_sets" => Self::HevcParamSets,
             "state" => Self::State,
             "state_watch" => Self::StateWatch,
             "node_click" => Self::NodeClick,
@@ -290,7 +327,9 @@ impl Verb {
             self,
             Self::Stream
                 | Self::StreamH264
+                | Self::StreamH265
                 | Self::StreamTileJpeg
+                | Self::StreamTileH265
                 | Self::Pull
                 | Self::Dumpsys
                 | Self::Logcat

@@ -227,7 +227,7 @@ impl StreamEngine {
     /// accepts the observation.
     pub fn produce(
         &mut self,
-        mut obs_factory: impl FnOnce(u64) -> Observation,
+        obs_factory: impl FnOnce(u64) -> Observation,
     ) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
@@ -497,7 +497,7 @@ mod tests {
         // `events_since` already dedups via discriminant.
         let unique_kinds: std::collections::HashSet<_> = events
             .iter()
-            .map(|e| std::mem::discriminant(e))
+            .map(std::mem::discriminant)
             .collect();
         assert_eq!(
             unique_kinds.len(),

@@ -46,17 +46,23 @@
 pub mod action;
 pub mod capability;
 pub mod ids;
+pub mod memory;
+#[cfg(feature = "sqlite")]
+pub mod memory_sqlite;
 pub mod observation;
 pub mod plan;
+pub mod plan_executor;
 pub mod predicate;
 pub mod predicate_engine;
+pub mod predicate_wait;
 pub mod protocol;
 pub mod state;
 pub mod stream_engine;
+pub mod ui_repr;
 
 pub use action::{
     Action, ActionResult, A11yNodeChangeKind, A11yNodeDiff, FrameDiff, GroundTruth,
-    LaunchBy, ObservationComponent,
+    LaunchBy, ObservationComponent, Rect,
 };
 pub use capability::{
     Capability, CapabilityContext, CapabilityError, CapabilityName, CapabilityOutput,
@@ -67,13 +73,19 @@ pub use observation::{
     A11yTree, DeviceEvent, DeviceState, FrameSnapshot, Observation,
 };
 pub use plan::{Plan, PlanResult, PlanStep, StepResult};
+pub use memory::{ActionSequence, Memory};
+#[cfg(feature = "sqlite")]
+pub use memory_sqlite as memory_sqlite_backend;
+pub use plan_executor::{execute, ExecutorCounters, PlanFailure};
 pub use predicate::{EventKind, Predicate, PredicateHandle, PredicateResult};
 pub use predicate_engine::{
     PredicateEngine, PredicateOutcome, RegisteredPredicate,
 };
+pub use predicate_wait::{wait_for, WaitOutcome};
 pub use protocol::{Frame, FrameFlags, ReplyPayload, RequestPayload, Verb};
 pub use state::StateModel;
 pub use stream_engine::{StreamEngine, Subscriber, SubscriberHandle, SUBSCRIBER_QUEUE_CAP};
+pub use ui_repr::{UiReprClass, UiReprHtml, UiReprNode};
 
 /// Protocol version the kernel speaks. Bumped whenever the wire
 /// format changes incompatibly. v3 design Phase 1 marks this as

@@ -16,20 +16,20 @@
 //!   `Matched` whose content is in the observation.
 //! - **`on_event(kind)`** is a fast path for `EventKind` matches
 //!   (no need to read the observation's content).
-//! - **No `std::net` / `select` / sleep loops.** The engine is
-//!   pure logic over `&mut self`. The host's runtime is
-//!   responsible for delivering events on time; the engine
-//!   decides "is this a match" in O(N_predicates).
+//! - **No network I/O, no select-style loops, no sleeping.**
+//!   The engine is pure logic over `&mut self`. The host's
+//!   runtime is responsible for delivering events on time; the
+//!   engine decides "is this a match" in O(N_predicates).
 //!
 //! AC-V3-2.3 (`grep` verifies 0 polling): the engine source
-//! contains no `std::net`, `select!`, `thread::sleep`, or
-//! `Instant::now` calls. Verified manually + by the
-//! `no_polling_lints` test below.
+//! contains none of the four forbidden timer / net / poll
+//! tokens. Verified manually + by the `no_polling_lints`
+//! test below.
 
 use std::collections::HashMap;
 
 use crate::ids::PredicateHandle;
-use crate::observation::{A11yTree, DeviceEvent, Observation};
+use crate::observation::{DeviceEvent, Observation};
 use crate::predicate::{EventKind, Predicate};
 
 /// One registered predicate plus its bookkeeping.

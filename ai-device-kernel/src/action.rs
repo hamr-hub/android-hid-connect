@@ -61,11 +61,47 @@ pub enum ObservationComponent {
     ForceKeyframe,
 }
 
-/// Typed action surface — 12 variants per v3 §3.2.1 / §3.8.
+/// Optional rectangle (x, y, w, h) for screen-relative regions.
+/// Used by `LocalizeText` / `DetectElement` to scope a search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Rect {
+    /// Left edge in screen pixels.
+    pub x: i32,
+    /// Top edge in screen pixels.
+    pub y: i32,
+    /// Width in pixels.
+    pub width: i32,
+    /// Height in pixels.
+    pub height: i32,
+}
+
+impl Rect {
+    /// True iff `width > 0 && height > 0`.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.width > 0 && self.height > 0
+    }
+
+    /// Center as (x, y) pixel coordinate.
+    #[must_use]
+    pub fn center(&self) -> (i32, i32) {
+        (
+            self.x.saturating_add(self.width / 2),
+            self.y.saturating_add(self.height / 2),
+        )
+    }
+}
+
+/// Typed action surface — 14 variants per v3 §3.6.3 / §3.2.1.
 ///
 /// Every variant carries a `deadline_ms` so the daemon always knows
 /// when to stop. Pure-read variants (`Wait`, `GetUiRepr`,
-/// `DumpObservation`) use it as a "stop sampling after this".
+/// `DumpObservation`, `LocalizeText`, `DetectElement`) use it as
+/// a "stop sampling after this".
+///
+/// Phase 4 adds `LocalizeText` + `DetectElement` on top of the
+/// 12 typed actions in §3.2.1; that brings the public surface
+/// to **14 typed actions** as called out in v3 §5 Phase 4 / AC-V3-4.1.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Action {
     /// Tap at `(x, y)` in screen pixels. No 16 ms sleep, no fake
@@ -179,6 +215,65 @@ pub enum Action {
         /// Daemon-side deadline.
         deadline_ms: u32,
     },
+    /// Phase 4: Localize text via ML Kit OCR (v3 §3.6.3
+    /// Stage 1). Daemon-side runs ML Kit v2 text recognition
+    /// against the latest frame (or `region` if provided) and
+    /// returns a list of bounding boxes whose text equals or
+    /// contains `query`.
+    LocalizeText {
+        /// Text to look for (case-sensitive exact or contains,
+        /// depending on daemon-side config).
+        query: String,
+        /// Optional screen-relative region to scope the
+        /// search (defaults to the full frame when `None`).
+        region: Option<Rect>,
+        /// Daemon-side deadline.
+        deadline_ms: u32,
+    },
+    /// Phase 4: Detect a UI element by class name via
+    /// YOLOv8n-int8 (v3 §3.6.3 Stage 1). Returns bounding
+    /// boxes whose class matches `class_name` and whose
+    /// confidence is at least `confidence_min`.
+    DetectElement {
+        /// Class name to detect (`button`, `edit_text`, …).
+        class_name: String,
+        /// Minimum confidence in `[0, 100]`.
+        confidence_min: u8,
+        /// Optional screen-relative region (full frame when None).
+        region: Option<Rect>,
+        /// Daemon-side deadline.
+        deadline_ms: u32,
+    },
+    /// Phase 5: Florence-2 grounding — given a free-text
+    /// description (`text`), find the region in `image_frame_id`
+    /// that matches (v3 §3.6.3 Stage 2: "Grounding: 找 'ok 按钮'
+    /// 在图里位置"). Returns a single bounding box.
+    Ground {
+        /// Free-text description of the target ("login
+        /// button", "search field", "Submit at the top").
+        text: String,
+        /// ID of the frame to ground against. When the host
+        /// runs `FrameSnapshot` end-to-end this is the
+        /// `FrameSnapshot.pts` value (Phase 5.5 binary
+        /// populates it from the screencap cache).
+        image_frame_id: u64,
+        /// Daemon-side deadline.
+        deadline_ms: u32,
+    },
+    /// Phase 8: End-side multimodal QA — given an
+    /// `image_frame_id` and a `question`, return a typed
+    /// string answer. Backend = GUI-Owl-1.5 sub-7B (per
+    /// v3 §3.6.3 Stage 3 + the open-question-1 feasibility
+    /// investigation that lands with the on-device binary).
+    AskVisual {
+        /// Question to answer about the image
+        /// ("Which element opens Settings?", …).
+        question: String,
+        /// ID of the frame to ask about.
+        image_frame_id: u64,
+        /// Daemon-side deadline.
+        deadline_ms: u32,
+    },
 }
 
 impl Action {
@@ -197,7 +292,11 @@ impl Action {
             | Self::Wait { deadline_ms, .. }
             | Self::GetUiRepr { deadline_ms, .. }
             | Self::DumpObservation { deadline_ms, .. }
-            | Self::InjectRaw { deadline_ms, .. } => *deadline_ms,
+            | Self::InjectRaw { deadline_ms, .. }
+            | Self::LocalizeText { deadline_ms, .. }
+            | Self::DetectElement { deadline_ms, .. }
+            | Self::Ground { deadline_ms, .. }
+            | Self::AskVisual { deadline_ms, .. } => *deadline_ms,
         }
     }
 
@@ -217,6 +316,10 @@ impl Action {
             Self::GetUiRepr { .. } => "get-ui-repr",
             Self::DumpObservation { .. } => "dump-observation",
             Self::InjectRaw { .. } => "inject-raw",
+            Self::LocalizeText { .. } => "localize-text",
+            Self::DetectElement { .. } => "detect-element",
+            Self::Ground { .. } => "ground",
+            Self::AskVisual { .. } => "ask-visual",
         }
     }
 
@@ -247,6 +350,21 @@ impl Action {
             Self::GetUiRepr { .. } | Self::DumpObservation { .. } => {
                 vec!["a11y.observe", "frame.observe"]
             }
+            // Phase 4: end-side LiteRT path (per v3 §3.6.3)
+            // — capability registry names appear in
+            // §3.6.1 too; the binary's gesture handler is
+            // responsible for invoking LiteRT and
+            // returning BoundingBox results via the
+            // existing `frame.observe` capability.
+            Self::LocalizeText { .. } => vec!["frame.observe", "litert.ocr"],
+            Self::DetectElement { .. } => {
+                vec!["frame.observe", "litert.detect"]
+            }
+            // Phase 5: Florence-2 grounding (per v3 §3.6.3 Stage 2).
+            Self::Ground { .. } => vec!["frame.observe", "litert.ground"],
+            // Phase 8: GUI-Owl-1.5 end-side VQA (per v3 §3.6.3 Stage 3
+            // + open-question-1 feasibility).
+            Self::AskVisual { .. } => vec!["frame.observe", "litert.vqa"],
         }
     }
 }

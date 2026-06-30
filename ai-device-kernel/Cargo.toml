@@ -18,6 +18,24 @@ postcard = { workspace = true }
 blake3 = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
+rusqlite = { workspace = true, optional = true }
+
+[features]
+sqlite = ["dep:rusqlite"]
+# sqlite is on by default for the AI Device Kernel daemon
+# (AC-V3-3.6). Disable for resource-constrained builds.
+default = ["sqlite"]
+
+[[bin]]
+name = "adk"
+path = "src/bin/adk.rs"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
 
 [lints.rust]
 unsafe_code = "forbid"

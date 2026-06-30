@@ -197,6 +197,17 @@ pub const ALL_CAPABILITY_NAMES: &[CapabilityName] = &[
     "pm.start_activity",
     "clipboard.set",
     "predicate.wait",
+    // Phase 4: end-side LiteRT capability names (v3 §3.6.3
+    // Stage 1: ML Kit OCR + YOLOv8n-int8). Phase 4.5/6
+    // will register concrete implementations on the
+    // device-side binary.
+    "litert.ocr",
+    "litert.detect",
+    // Phase 5: Florence-2 grounding (v3 §3.6.3 Stage 2).
+    "litert.ground",
+    // Phase 8: GUI-Owl-1.5 sub-7B end-side VQA
+    // (v3 §3.6.3 Stage 3 + open-question-1 feasibility).
+    "litert.vqa",
 ];
 
 #[cfg(test)]
@@ -435,6 +446,27 @@ mod tests {
             },
             Action::InjectRaw {
                 bytes: vec![],
+                deadline_ms: 0,
+            },
+            Action::LocalizeText {
+                query: "x".into(),
+                region: None,
+                deadline_ms: 0,
+            },
+            Action::DetectElement {
+                class_name: "button".into(),
+                confidence_min: 50,
+                region: None,
+                deadline_ms: 0,
+            },
+            Action::Ground {
+                text: "x".into(),
+                image_frame_id: 0,
+                deadline_ms: 0,
+            },
+            Action::AskVisual {
+                question: "x".into(),
+                image_frame_id: 0,
                 deadline_ms: 0,
             },
         ];

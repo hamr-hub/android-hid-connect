@@ -224,6 +224,16 @@ impl ScreenId {
     /// screen so equality checks don't false-match.
     pub const UNKNOWN: Self = Self([0u8; 16]);
 
+    /// Cheap fingerprint derived from a `pkg/.activity` string only.
+    /// Used by the host binary to bucket per-app Memory entries when
+    /// the full a11y + frame pHash isn't available. Collisions
+    /// across screens within the same app are tolerated by the
+    /// Memory layer (it appends).
+    #[must_use]
+    pub fn from_focus(focus: &str) -> Self {
+        Self::compute(b"", b"", focus)
+    }
+
     /// Compute a screen fingerprint from the three sources of
     /// identity. Order of inputs is fixed; the resulting digest is
     /// blake3 truncated to 16 bytes.

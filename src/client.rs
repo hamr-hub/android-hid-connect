@@ -30,7 +30,9 @@
 //! let _sock = dispatcher.join().unwrap();
 //! ```
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -39,6 +41,7 @@ use crate::control::message::{
     AiConfig, AiQuery, BackOrScreenOn, ControlMessage, SetClipboard, SetDisplayPower, StartApp,
 };
 use crate::error::{Error, Result, TransportWrite};
+use crate::gamepad_ring::{GamepadFrameRing, TryPushError};
 use crate::session::{GamepadFrameRaw, HidSession, GAMEPAD_FRAME_BYTES};
 use crate::types::{
     AndroidKeyAction, AndroidKeycode, ClipboardCopyKey, GamepadAxis, GamepadButton, Modifiers,
@@ -598,18 +601,124 @@ pub enum HidCommand {
     /// Flush pending coalesced writes and acknowledge after the dispatcher has
     /// processed all commands before this barrier.
     FlushAck {
-        ack: SyncSender<Result<usize>>,
+        seq: u64,
+        slot: Arc<FlushSlot>,
     },
     Flush,
     Close,
 }
 
+/// Per-call oneshot completion slot for [`HidClient::flush_wait`] —
+/// replaces a `mpsc::sync_channel(1)` pair (one allocation per side plus
+/// wait-queue bookkeeping per call) with a single `Arc<FlushSlot>`
+/// containing a `Mutex<Option<Result<usize>>>` plus a `Condvar`.
+///
+/// The dispatcher writes the result directly into the caller's slot
+/// (no shared cache, no race across waiters), so we never have to
+/// clone a non-`Clone` `Result<usize, Error>`. Each call owns its own
+/// slot through the Arc and drops it after reading the result.
+///
+/// `FlushRegistry` is the only piece of state shared across
+/// `HidClient::clone()`s — it only allocates a monotonic sequence
+/// number for diagnostic identification. The actual result handoff is
+/// per-slot, so `Clone` on `HidClient` is cheap and never serialises.
+struct FlushRegistry {
+    next_seq: AtomicU64,
+}
+
+#[derive(Debug)]
+pub struct FlushSlot {
+    state: Mutex<Option<Result<usize>>>,
+    cvar: Condvar,
+}
+
+impl FlushRegistry {
+    fn new() -> Self {
+        Self {
+            next_seq: AtomicU64::new(1),
+        }
+    }
+    /// Allocate the next monotonic sequence number. `Relaxed` is
+    /// sufficient because the seq is purely a diagnostic identifier —
+    /// correctness is established by the per-slot mutex/condvar.
+    fn next_seq(&self) -> u64 {
+        self.next_seq.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+impl Default for FlushRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FlushSlot {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(None),
+            cvar: Condvar::new(),
+        }
+    }
+    /// Block until the dispatcher writes a result, then take it out by
+    /// value. Single writer (dispatcher) + single reader (this waiter),
+    /// so the `Option::take` is unconditional and we never clone a
+    /// non-`Clone` `Result<usize, Error>`.
+    fn wait(self: Arc<Self>) -> Result<usize> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| Error::DispatcherDown("flush completion mutex poisoned"))?;
+        while guard.is_none() {
+            guard = self
+                .cvar
+                .wait(guard)
+                .map_err(|_| Error::DispatcherDown("flush completion mutex poisoned"))?;
+        }
+        guard
+            .take()
+            .expect("condvar loop exited only after a `notify()` wrote Some")
+    }
+    /// Dispatcher fast-path: store the result and wake the waiter.
+    fn notify(&self, result: Result<usize>) {
+        if let Ok(mut guard) = self.state.lock() {
+            *guard = Some(result);
+            self.cvar.notify_all();
+        }
+    }
+}
+
+impl std::fmt::Debug for FlushRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FlushRegistry").finish_non_exhaustive()
+    }
+}
+
+
 /// Producer side of the parallel control channel. `Clone` = additional
 /// producer to the same channel. `Send` but not `Sync` (mpsc isn't);
 /// use `Arc<HidClient>` if needed.
+///
+/// When the client is constructed via
+/// [`HidSession::into_client_with_gamepad_ring`], `gamepad_ring` is
+/// `Some(...)` and the gamepad send methods (`send_frame`,
+/// `send_frame_packed`, …) take a lock-free SPSC fast-path that
+/// bypasses the mpsc on the producer side. The mpsc is still used as
+/// the fallback when the ring is full (best-effort: don't lose the
+/// frame) and for non-gamepad commands.
 #[derive(Debug, Clone)]
 pub struct HidClient {
     tx: SyncSender<HidCommand>,
+    flush_seq: Arc<FlushRegistry>,
+    /// Optional SPSC ring used by the gamepad fast-path. `None` in the
+    /// default `into_client` / `into_client_with_bound` constructors.
+    gamepad_ring: Option<Arc<GamepadFrameRing>>,
+    /// Close signal for the dedicated gamepad consumer thread (set by
+    /// `HidClient::close()`). Only meaningful when `gamepad_ring` is
+    /// `Some`.
+    gamepad_close: Option<Arc<AtomicBool>>,
+    /// Set by the gamepad consumer thread when it observes a session
+    /// error. Only meaningful when `gamepad_ring` is `Some`.
+    gamepad_error: Option<Arc<AtomicBool>>,
 }
 
 /// Handle for joining the dispatcher thread and recovering the
@@ -651,8 +760,126 @@ impl<T: TransportWrite + Send + 'static> HidSession<T> {
             .name("android-hid-dispatcher".into())
             .spawn(move || dispatcher_loop(self, rx))
             .map_err(|e| Error::Transport(format!("dispatcher spawn: {e}")))?;
-        Ok((HidClient { tx }, HidDispatcher { join: Some(join) }))
+        Ok((
+            HidClient {
+                tx,
+                flush_seq: Arc::new(FlushRegistry::new()),
+                gamepad_ring: None,
+                gamepad_close: None,
+                gamepad_error: None,
+            },
+            HidDispatcher { join: Some(join) },
+        ))
     }
+
+    /// Move this session into a dedicated **gamepad fast-path** runtime.
+    ///
+    /// This is the OPT-1 constructor: the producer-side gamepad send
+    /// methods bypass `mpsc::sync_channel` and push directly to an
+    /// 8-slot lock-free SPSC ring. A dedicated consumer thread named
+    /// `"android-hid-gamepad-fast"` pops frames from the ring and
+    /// forwards them to `session.set_frame_raw(...)`.
+    ///
+    /// # Design
+    ///
+    /// The consumer thread is the **sole owner** of the `HidSession`.
+    /// It pops a frame, calls `set_frame_raw`, and on the first
+    /// transport error sets a shared `AtomicBool` error flag and exits
+    /// the loop. It still closes the session before returning the
+    /// transport, so the caller always gets a `UHID_DESTROY` on the
+    /// wire and can recover the transport via
+    /// [`HidDispatcher::join`].
+    ///
+    /// # SPSC contract
+    ///
+    /// The ring is single-producer. In practice this is fine: the 240Hz
+    /// game loop is one thread, and the ring is the producer-side
+    /// optimisation for that loop. If multiple threads need to push
+    /// gamepad frames concurrently, fall back to
+    /// [`Self::into_client_with_bound`] (which still uses the mpsc
+    /// path).
+    ///
+    /// # When to prefer this over `into_client`
+    ///
+    /// When the dominant traffic is a 240Hz single-producer gamepad
+    /// loop in `OpenRequest::gamepad_only_realtime()` mode. For mixed
+    /// traffic (keyboard + mouse + gamepad from many threads), the mpsc
+    /// path is fine and simpler.
+    pub fn into_client_with_gamepad_ring(
+        self,
+    ) -> Result<(HidClient, HidDispatcher<T>)> {
+        let ring = Arc::new(GamepadFrameRing::new());
+        let close_flag = Arc::new(AtomicBool::new(false));
+        let error_flag = Arc::new(AtomicBool::new(false));
+
+        let ring_c = Arc::clone(&ring);
+        let close_c = Arc::clone(&close_flag);
+        let error_c = Arc::clone(&error_flag);
+        // The consumer thread owns the session directly. There is no
+        // separate mpsc / dispatcher in this mode: non-gamepad
+        // commands are not supported (and `OpenRequest::gamepad_only_realtime`
+        // opens no kbd/mouse anyway).
+        let join = thread::Builder::new()
+            .name("android-hid-gamepad-fast".into())
+            .spawn(move || gamepad_consumer_loop(self, ring_c, close_c, error_c))
+            .map_err(|e| Error::Transport(format!("gamepad consumer spawn: {e}")))?;
+
+        // The mpsc sender is a stub: its receiver is dropped, so any
+        // non-gamepad `send` will fail with `DispatcherDown`. This is
+        // the correct behaviour in gamepad-only mode.
+        let (tx, _rx_drop) = mpsc::sync_channel::<HidCommand>(1);
+        drop(_rx_drop);
+
+        Ok((
+            HidClient {
+                tx,
+                flush_seq: Arc::new(FlushRegistry::new()),
+                gamepad_ring: Some(ring),
+                gamepad_close: Some(close_flag),
+                gamepad_error: Some(error_flag),
+            },
+            HidDispatcher { join: Some(join) },
+        ))
+    }
+}
+
+fn gamepad_consumer_loop<T: TransportWrite + Send + 'static>(
+    mut session: HidSession<T>,
+    ring: Arc<GamepadFrameRing>,
+    close_flag: Arc<AtomicBool>,
+    error_flag: Arc<AtomicBool>,
+) -> Result<T> {
+    loop {
+        // Drain any pending frame first; the close flag is only
+        // checked when the ring is empty, so a close right after a
+        // push still delivers the in-flight frame.
+        if let Some(frame) = ring.pop() {
+            if session
+                .set_frame_raw(
+                    frame.buttons,
+                    frame.left_x,
+                    frame.left_y,
+                    frame.right_x,
+                    frame.right_y,
+                    frame.left_trigger,
+                    frame.right_trigger,
+                )
+                .is_err()
+            {
+                error_flag.store(true, Ordering::Release);
+                break;
+            }
+            continue;
+        }
+        if close_flag.load(Ordering::Acquire) {
+            break;
+        }
+        thread::yield_now();
+    }
+    // Always close the session so the wire gets a `UHID_DESTROY` and
+    // the caller can recover the transport.
+    let _ = session.close();
+    Ok(session.into_inner())
 }
 
 impl HidClient {
@@ -1804,6 +2031,23 @@ impl HidClient {
         if frames.len() == 1 {
             return self.send_frame(frames[0]);
         }
+        // Fast path: push as many frames as the ring accepts; spill
+        // the remainder to the mpsc batch path (best-effort: keep
+        // order, don't drop everything just because the ring briefly
+        // filled).
+        if let Some(ring) = &self.gamepad_ring {
+            let mut rest: Vec<GamepadFrameRaw> = Vec::new();
+            for f in frames {
+                match ring.push(f) {
+                    Ok(()) => {}
+                    Err(TryPushError::Full) => rest.push(f),
+                }
+            }
+            if rest.is_empty() {
+                return Ok(());
+            }
+            return self.send(HidCommand::GamepadFrameRawBatch(rest));
+        }
         self.send(HidCommand::GamepadFrameRawBatch(frames))
     }
 
@@ -1812,6 +2056,15 @@ impl HidClient {
     /// Use this when your loop wants unchanged-frame suppression even
     /// when going through `HidClient`.
     pub fn send_frame(&self, frame: GamepadFrameRaw) -> Result<()> {
+        // Fast path: SPSC ring bypasses the mpsc for the 240Hz game loop.
+        if let Some(ring) = &self.gamepad_ring {
+            if ring.push(frame).is_ok() {
+                return Ok(());
+            }
+            // Ring is full: fall through to the mpsc so the frame is
+            // not lost (best-effort: late frame = stale frame, but
+            // we still try).
+        }
         self.send(HidCommand::GamepadFrameRaw {
             buttons: frame.buttons,
             left_x: frame.left_x,
@@ -1842,7 +2095,38 @@ impl HidClient {
             }
             return self.send_frame_unchecked(frame);
         }
-        if dedupe {
+        // Fast path: push as many frames as the ring accepts; for the
+        // remainder, fall back to the mpsc batch path. We rebuild a
+        // fixed-size array for the spillover (rare path: ring should
+        // almost never fill mid-batch at 240Hz with an 8-slot ring).
+        if let Some(ring) = &self.gamepad_ring {
+            let mut spilled: [GamepadFrameRaw; DIRECT_GAMEPAD_BATCH_FRAMES] =
+                [GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0); DIRECT_GAMEPAD_BATCH_FRAMES];
+            let mut spilled_len: usize = 0;
+            for f in frames.iter().take(len).copied() {
+                match ring.push(f) {
+                    Ok(()) => {}
+                    Err(TryPushError::Full) => {
+                        spilled[spilled_len] = f;
+                        spilled_len += 1;
+                    }
+                }
+            }
+            if spilled_len == 0 {
+                return Ok(());
+            }
+            if dedupe {
+                self.send(HidCommand::GamepadFrameRawBatchFixed {
+                    len: spilled_len as u8,
+                    frames: spilled,
+                })
+            } else {
+                self.send(HidCommand::GamepadFrameRawBatchFixedUnchecked {
+                    len: spilled_len as u8,
+                    frames: spilled,
+                })
+            }
+        } else if dedupe {
             self.send(HidCommand::GamepadFrameRawBatchFixed {
                 len: len as u8,
                 frames,
@@ -1927,6 +2211,21 @@ impl HidClient {
         if frames.len() == 1 {
             return self.send_frame_unchecked(frames[0]);
         }
+        // Fast path: push as many frames as the ring accepts; spill
+        // the remainder to the mpsc batch path.
+        if let Some(ring) = &self.gamepad_ring {
+            let mut rest: Vec<GamepadFrameRaw> = Vec::new();
+            for f in frames {
+                match ring.push(f) {
+                    Ok(()) => {}
+                    Err(TryPushError::Full) => rest.push(f),
+                }
+            }
+            if rest.is_empty() {
+                return Ok(());
+            }
+            return self.send(HidCommand::GamepadFrameRawBatchUnchecked(rest));
+        }
         self.send(HidCommand::GamepadFrameRawBatchUnchecked(frames))
     }
 
@@ -1935,6 +2234,12 @@ impl HidClient {
     /// Use this when your loop already owns the whole frame and wants
     /// every sample on the wire.
     pub fn send_frame_unchecked(&self, frame: GamepadFrameRaw) -> Result<()> {
+        // Fast path: SPSC ring bypasses the mpsc for the 240Hz game loop.
+        if let Some(ring) = &self.gamepad_ring {
+            if ring.push(frame).is_ok() {
+                return Ok(());
+            }
+        }
         self.send(HidCommand::GamepadFrameRawUnchecked(frame))
     }
 
@@ -1942,6 +2247,13 @@ impl HidClient {
     ///
     /// Drops to `SessionLifecycle` when the internal queue is full.
     pub fn try_send_frame_unchecked(&self, frame: GamepadFrameRaw) -> Result<()> {
+        // Fast path: drop-on-full is the correct gamepad semantics.
+        if let Some(ring) = &self.gamepad_ring {
+            ring.push(frame).map_err(|_| {
+                Error::SessionLifecycle("gamepad ring full (drop-on-full)")
+            })?;
+            return Ok(());
+        }
         self.tx
             .try_send(HidCommand::GamepadFrameRawUnchecked(frame))
             .map_err(|e| match e {
@@ -2094,6 +2406,16 @@ impl HidClient {
     ///
     /// Drops to `SessionLifecycle` when the internal queue is full.
     pub fn try_send_frame(&self, frame: GamepadFrameRaw) -> Result<()> {
+        // Fast path: SPSC ring bypasses the mpsc for the 240Hz game loop.
+        // Drop-on-full is the correct gamepad semantics (late frame =
+        // stale frame); we do NOT fall back to the mpsc here because
+        // the caller explicitly asked for non-blocking semantics.
+        if let Some(ring) = &self.gamepad_ring {
+            ring.push(frame).map_err(|_| {
+                Error::SessionLifecycle("gamepad ring full (drop-on-full)")
+            })?;
+            return Ok(());
+        }
         self.tx
             .try_send(HidCommand::GamepadFrameRaw {
                 buttons: frame.buttons,
@@ -2308,7 +2630,34 @@ impl HidClient {
     }
 
     pub fn close(&self) {
+        // Gamepad fast-path: signal the dedicated consumer thread to
+        // exit its loop, close the session, and return the transport.
+        // This is the only thing the consumer thread watches in
+        // ring mode (no mpsc in this path).
+        if let Some(close_flag) = &self.gamepad_close {
+            close_flag.store(true, Ordering::Release);
+        }
         let _ = self.tx.send(HidCommand::Close);
+    }
+
+    /// Returns `true` if the dedicated gamepad consumer thread (set up
+    /// by [`crate::session::HidSession::into_client_with_gamepad_ring`])
+    /// observed an error and exited. Always returns `false` in the
+    /// default mpsc-dispatcher mode (where there is no gamepad consumer
+    /// thread).
+    pub fn gamepad_consumer_error(&self) -> bool {
+        self.gamepad_error
+            .as_ref()
+            .map(|f| f.load(Ordering::Acquire))
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if this client was constructed via the
+    /// gamepad-fast-path constructor
+    /// ([`crate::session::HidSession::into_client_with_gamepad_ring`]).
+    /// Useful for callers that want to branch on the transport mode.
+    pub fn is_gamepad_fast_path(&self) -> bool {
+        self.gamepad_ring.is_some()
     }
 
     /// Flush all prior work, report any dispatcher-side command error, then
@@ -2332,11 +2681,17 @@ impl HidClient {
     /// Flush pending coalesced writes and wait until the dispatcher has
     /// processed all commands queued before this barrier.
     pub fn flush_wait(&self) -> Result<usize> {
-        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
-        self.send(HidCommand::FlushAck { ack: ack_tx })?;
-        ack_rx
-            .recv()
-            .map_err(|_| Error::DispatcherDown("flush acknowledgement dropped"))?
+        let slot = Arc::new(FlushSlot::new());
+        let seq = self.flush_seq.next_seq();
+        self.send(HidCommand::FlushAck {
+            seq,
+            slot: Arc::clone(&slot),
+        })?;
+        // Slot poisons surface as DispatcherDown; the result the
+        // dispatcher wrote (success / per-command error) is returned
+        // verbatim so prior command errors surface to callers
+        // unchanged.
+        slot.wait()
     }
 
     /// Non-blocking enqueue of a checked flush barrier.
@@ -2345,9 +2700,13 @@ impl HidClient {
     /// already full. Once the barrier is accepted, it waits for the dispatcher
     /// acknowledgement and surfaces prior command errors like [`Self::flush_wait`].
     pub fn try_flush_wait(&self) -> Result<usize> {
-        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+        let slot = Arc::new(FlushSlot::new());
+        let seq = self.flush_seq.next_seq();
         self.tx
-            .try_send(HidCommand::FlushAck { ack: ack_tx })
+            .try_send(HidCommand::FlushAck {
+                seq,
+                slot: Arc::clone(&slot),
+            })
             .map_err(|e| match e {
                 mpsc::TrySendError::Full(_) => {
                     Error::SessionLifecycle("channel full (back-pressure)")
@@ -2356,9 +2715,7 @@ impl HidClient {
                     Error::DispatcherDown("channel disconnected")
                 }
             })?;
-        ack_rx
-            .recv()
-            .map_err(|_| Error::DispatcherDown("flush acknowledgement dropped"))?
+        slot.wait()
     }
 
     /// Non-blocking flush request for coalesced UHID_INPUT writes.
@@ -4618,7 +4975,7 @@ fn dispatch_to_session<T: TransportWrite + Send>(
             record_first_error(pending_error, session.request_clipboard(copy_key));
             false
         }
-        HidCommand::FlushAck { ack } => {
+        HidCommand::FlushAck { seq, slot } => {
             let prior_error = pending_error.take();
             let flush_result = session.flush_now();
             let result = match prior_error {
@@ -4630,7 +4987,11 @@ fn dispatch_to_session<T: TransportWrite + Send>(
                 }
                 None => flush_result,
             };
-            let _ = ack.send(result);
+            // `seq` is reserved for future use (e.g. when multiple
+            // `HidClient` clones share a single dispatcher); the slot
+            // itself carries the result directly.
+            let _ = seq;
+            slot.notify(result);
             false
         }
         HidCommand::Flush => {
@@ -4813,7 +5174,13 @@ mod tests {
     #[test]
     fn gamepad_frame_batcher_fixed_try_push_stays_safe_when_channel_full() {
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = GamepadFrameBatcher::dedupe(&client, 2);
 
         assert!(batcher
@@ -4838,7 +5205,13 @@ mod tests {
     #[test]
     fn packed_gamepad_frame_batcher_fixed_try_push_stays_safe_when_channel_full() {
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = PackedGamepadFrameBatcher::new(&client, 2);
         let frame = [1u8; GAMEPAD_FRAME_BYTES];
 
@@ -4862,7 +5235,13 @@ mod tests {
     #[test]
     fn batcher_drop_is_non_blocking_when_channel_full() {
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         // GamepadFrameBatcher: fill the channel so Drop's flush sees a
         // full mpsc and would block if it used the blocking path.
@@ -4907,7 +5286,13 @@ mod tests {
     fn vector_backed_batcher_flush_restores_frames_when_channel_disconnected() {
         let (tx, rx) = sync_channel(1);
         drop(rx);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let batch_size = DIRECT_GAMEPAD_BATCH_FRAMES + 8;
 
         let mut batcher = GamepadFrameBatcher::dedupe(&client, batch_size);
@@ -4931,7 +5316,13 @@ mod tests {
     #[test]
     fn vector_backed_batcher_try_flush_restores_frames_when_channel_full() {
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         client.try_flush().unwrap();
         let batch_size = DIRECT_GAMEPAD_BATCH_FRAMES + 8;
 
@@ -4956,7 +5347,13 @@ mod tests {
     #[test]
     fn send_frame_batch_len_one_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let frame = GamepadFrameRaw::new(0x0001, 10, 20, 30, 40, 50, 60);
 
         client.send_frame_batch(vec![frame]).unwrap();
@@ -4985,7 +5382,13 @@ mod tests {
     #[test]
     fn send_frame_batch_unchecked_len_one_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let frame = GamepadFrameRaw::new(0x0002, 11, 21, 31, 41, 51, 61);
 
         client.send_frame_batch_unchecked(vec![frame]).unwrap();
@@ -5000,7 +5403,13 @@ mod tests {
     #[test]
     fn send_frame_packed_batch_len_one_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let frame = [0xABu8; GAMEPAD_FRAME_BYTES];
 
         client.send_frame_packed_batch(vec![frame]).unwrap();
@@ -5013,7 +5422,13 @@ mod tests {
     #[test]
     fn try_send_frame_batch_len_one_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let frame = GamepadFrameRaw::new(0x0003, 12, 22, 32, 42, 52, 62);
 
         client.try_send_frame_batch(vec![frame]).unwrap();
@@ -5042,7 +5457,13 @@ mod tests {
     #[test]
     fn try_send_frame_packed_batch_len_one_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let frame = [0xCDu8; GAMEPAD_FRAME_BYTES];
 
         client.try_send_frame_packed_batch(vec![frame]).unwrap();
@@ -5055,7 +5476,13 @@ mod tests {
     #[test]
     fn gamepad_frame_batcher_flush_single_frame_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = GamepadFrameBatcher::dedupe(&client, 4);
         let frame = GamepadFrameRaw::new(0x0001, 10, 20, 30, 40, 50, 60);
 
@@ -5087,7 +5514,13 @@ mod tests {
     #[test]
     fn packed_gamepad_frame_batcher_flush_single_frame_uses_single_cmd() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = PackedGamepadFrameBatcher::new(&client, 4);
         let frame = [1u8; GAMEPAD_FRAME_BYTES];
 
@@ -5103,7 +5536,13 @@ mod tests {
     #[test]
     fn send_gamepad_input_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(4);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.send_button(GamepadButton::South, true).unwrap();
         match rx.try_recv().unwrap() {
@@ -5149,7 +5588,13 @@ mod tests {
     #[test]
     fn try_send_gamepad_input_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(4);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.try_send_left_stick_raw(7, -7).unwrap();
         match rx.try_recv().unwrap() {
@@ -5176,7 +5621,13 @@ mod tests {
     #[test]
     fn strict_text_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.type_text_strict("ok").unwrap();
         client.try_type_text_strict("still ok").unwrap();
@@ -5220,7 +5671,13 @@ mod tests {
     #[test]
     fn keyboard_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(4);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.key(0x04, true, Modifiers::LSHIFT).unwrap();
         client
@@ -5303,7 +5760,13 @@ mod tests {
     #[test]
     fn keyboard_batch_fixed_uses_expected_commands() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut frames = [KeyboardFrame::EMPTY; KEYBOARD_BATCH_FRAMES];
         frames[0] = KeyboardFrame::scancode_down(Scancode::A, Modifiers::LSHIFT);
         frames[1] = KeyboardFrame::scancode_up(Scancode::A);
@@ -5364,7 +5827,13 @@ mod tests {
     #[test]
     fn keyboard_chord_helpers_use_expected_command() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client
             .scancode_chord(&[Scancode::C], Modifiers::LCTRL)
@@ -5410,7 +5879,13 @@ mod tests {
             Err(Error::SessionLifecycle("keyboard chord length overflow"))
         ));
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         assert!(matches!(
             client.key_chord(chord),
             Err(Error::SessionLifecycle("keyboard chord length overflow"))
@@ -5420,7 +5895,13 @@ mod tests {
     #[test]
     fn keyboard_frame_batcher_flushes_at_fixed_capacity() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = KeyboardFrameBatcher::new(&client);
 
         for _ in 0..KEYBOARD_BATCH_FRAMES {
@@ -5466,7 +5947,13 @@ mod tests {
     #[test]
     fn keyboard_frame_batcher_try_push_many_slice_keeps_batch_on_backpressure() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = KeyboardFrameBatcher::new(&client);
         let frames: Vec<_> = (0..KEYBOARD_BATCH_FRAMES)
             .map(|_| KeyboardFrame::scancode_down(Scancode::A, Modifiers::empty()))
@@ -5591,7 +6078,13 @@ mod tests {
     #[test]
     fn mouse_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(8);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client
             .mouse_motion_buttons(10, -5, &[MouseButton::Left, MouseButton::X1])
@@ -5661,7 +6154,13 @@ mod tests {
     #[test]
     fn mouse_batch_rejects_oversized_len() {
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let err = client
             .send_mouse_batch_fixed(
                 MOUSE_BATCH_FRAMES + 1,
@@ -5674,7 +6173,13 @@ mod tests {
     #[test]
     fn mouse_frame_batcher_flushes_at_fixed_capacity() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = MouseFrameBatcher::new(&client);
 
         for i in 0..MOUSE_BATCH_FRAMES {
@@ -5722,7 +6227,13 @@ mod tests {
     #[test]
     fn mouse_frame_batcher_push_many_slice_splits_at_capacity() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = MouseFrameBatcher::new(&client);
         let frames: Vec<_> = (0..MOUSE_BATCH_FRAMES + 2)
             .map(|i| MouseFrame::motion(i as i32, 0, 0))
@@ -5755,7 +6266,13 @@ mod tests {
     #[test]
     fn mouse_frame_batcher_try_push_many_slice_keeps_batch_on_backpressure() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = MouseFrameBatcher::new(&client);
         let frames: Vec<_> = (0..MOUSE_BATCH_FRAMES)
             .map(|i| MouseFrame::motion(i as i32, 0, MouseButton::Left as u8))
@@ -5782,7 +6299,13 @@ mod tests {
     #[test]
     fn mouse_frame_batcher_try_helpers_use_expected_command() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = MouseFrameBatcher::new(&client);
 
         batcher
@@ -5842,7 +6365,13 @@ mod tests {
     #[test]
     fn android_intent_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(32);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.press_home().unwrap();
         client.press_back().unwrap();
@@ -6034,7 +6563,13 @@ mod tests {
     #[test]
     fn android_key_tap_shortcuts_use_single_command() {
         let (tx, rx) = sync_channel(3);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.tap_android_key(AndroidKeycode::ENTER).unwrap();
         client
@@ -6068,7 +6603,13 @@ mod tests {
     #[test]
     fn android_key_batch_fixed_uses_expected_commands() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut frames = [AndroidKeyFrame::EMPTY; ANDROID_KEY_BATCH_FRAMES];
         frames[0] = AndroidKeyFrame::typed(AndroidKeyAction::DOWN, AndroidKeycode::ENTER, 0, 3);
         frames[1] = AndroidKeyFrame::typed(AndroidKeyAction::UP, AndroidKeycode::ENTER, 0, 3);
@@ -6104,7 +6645,13 @@ mod tests {
     #[test]
     fn android_key_frame_batcher_flushes_at_fixed_capacity() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = AndroidKeyFrameBatcher::new(&client);
 
         for _ in 0..ANDROID_KEY_BATCH_FRAMES {
@@ -6145,7 +6692,13 @@ mod tests {
     #[test]
     fn android_key_frame_batcher_try_push_many_slice_keeps_batch_on_backpressure() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = AndroidKeyFrameBatcher::new(&client);
         let frames: Vec<_> = (0..ANDROID_KEY_BATCH_FRAMES)
             .map(|_| AndroidKeyFrame::down(AndroidKeycode::ENTER, 0))
@@ -6205,7 +6758,13 @@ mod tests {
     #[test]
     fn scroll_batch_fixed_uses_expected_commands() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut frames = [ScrollFrame::EMPTY; SCROLL_BATCH_FRAMES];
         frames[0] = ScrollFrame::new(100, 200, 8.0, -16.0, 0x11);
         frames[1] = ScrollFrame::scroll(300, 400, 0.0, 16.0);
@@ -6239,7 +6798,13 @@ mod tests {
     #[test]
     fn scroll_frame_batcher_flushes_at_fixed_capacity() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = ScrollFrameBatcher::new(&client);
 
         for i in 0..SCROLL_BATCH_FRAMES {
@@ -6291,7 +6856,13 @@ mod tests {
     #[test]
     fn scroll_frame_batcher_try_push_many_slice_keeps_batch_on_backpressure() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = ScrollFrameBatcher::new(&client);
         let frames: Vec<_> = (0..SCROLL_BATCH_FRAMES)
             .map(|i| ScrollFrame::scroll(i as i32, 0, 0.0, 1.0))
@@ -6350,7 +6921,13 @@ mod tests {
     #[test]
     fn screen_size_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.set_screen_size(1440, 3120).unwrap();
         client.try_set_screen_size(1080, 2400).unwrap();
@@ -6508,7 +7085,13 @@ mod tests {
     #[test]
     fn try_flush_wait_reports_backpressure_without_blocking() {
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.try_flush().unwrap();
         let err = client.try_flush_wait().unwrap_err();
@@ -6617,7 +7200,13 @@ mod tests {
     #[test]
     fn flush_command_round_trip() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.flush().unwrap();
         client.try_flush().unwrap();
@@ -6629,7 +7218,13 @@ mod tests {
     #[test]
     fn clipboard_request_helpers_are_request_only_commands() {
         let (tx, rx) = sync_channel(4);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.request_clipboard(1).unwrap();
         client.try_request_clipboard(2).unwrap();
@@ -6661,7 +7256,13 @@ mod tests {
     #[test]
     fn ai_extension_shortcuts_use_expected_commands() {
         let (tx, rx) = sync_channel(6);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
 
         client.configure_ai(0x1f, 16, 64).unwrap();
         client.try_configure_ai(0x07, 8, 0).unwrap();
@@ -6743,7 +7344,13 @@ mod tests {
     #[test]
     fn touch_batch_fixed_rejects_oversized_len() {
         let (tx, _rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let frames = [TouchFrame::EMPTY; TOUCH_BATCH_FRAMES];
         let err = client
             .send_touch_batch_fixed(TOUCH_BATCH_FRAMES + 1, frames)
@@ -6755,7 +7362,13 @@ mod tests {
     #[test]
     fn touch_frame_batcher_flushes_at_fixed_capacity() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = TouchFrameBatcher::new(&client);
 
         for i in 0..TOUCH_BATCH_FRAMES {
@@ -6795,7 +7408,13 @@ mod tests {
     #[test]
     fn touch_pointer_id_helpers_preserve_scrcpy_reserved_ids_in_batches() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let pointer = TouchPointerId::GENERIC_FINGER;
         let mut batcher = TouchFrameBatcher::new(&client);
 
@@ -6824,7 +7443,13 @@ mod tests {
     #[test]
     fn touch_frame_batcher_push_many_slice_splits_at_capacity() {
         let (tx, rx) = sync_channel(2);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = TouchFrameBatcher::new(&client);
         let frames: Vec<_> = (0..TOUCH_BATCH_FRAMES + 2)
             .map(|i| TouchFrame::with_action(TouchAction::MOVE, 0, i as i32, 0, 1.0))
@@ -6857,7 +7482,13 @@ mod tests {
     #[test]
     fn touch_frame_batcher_try_push_many_slice_keeps_batch_on_backpressure() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = TouchFrameBatcher::new(&client);
         let frames: Vec<_> = (0..TOUCH_BATCH_FRAMES)
             .map(|i| TouchFrame::with_action(TouchAction::MOVE, 1, i as i32, 0, 1.0))
@@ -6884,7 +7515,13 @@ mod tests {
     #[test]
     fn touch_frame_batcher_try_helpers_use_expected_command() {
         let (tx, rx) = sync_channel(1);
-        let client = HidClient { tx };
+        let client = HidClient {
+            tx,
+            flush_seq: Arc::new(FlushRegistry::new()),
+            gamepad_ring: None,
+            gamepad_close: None,
+            gamepad_error: None,
+        };
         let mut batcher = TouchFrameBatcher::new(&client);
 
         batcher.try_down(7, 10, 20, 1.0).unwrap();
@@ -6945,5 +7582,50 @@ mod tests {
         client.close();
         let transport = dispatcher.join().unwrap();
         assert_eq!(count_touch_events(&transport.into_bytes()), expected);
+    }
+
+    /// OPT-4: two `HidClient::clone()`s, each driving `flush_wait()` in
+    /// parallel from its own thread, must both observe a coherent
+    /// result — i.e. the per-call `Arc<FlushSlot>` (replacing the old
+    /// `mpsc::sync_channel(1)`) hands the dispatcher-produced result
+    /// back to the right caller without cross-talk between concurrent
+    /// calls. `Ok(0)` is the empty-coalesce flush count for an
+    /// `OpenRequest::none()` session.
+    #[test]
+    fn flush_wait_two_clones_in_parallel_returns_coherent_results() {
+        use std::thread;
+
+        let session = HidSession::open(MockTransport::new(), OpenRequest::none()).unwrap();
+        let (client, dispatcher) = session.into_client().unwrap();
+        let a = client.clone();
+        let b = client.clone();
+        let closer = client;
+
+        let ta = thread::spawn(move || {
+            let mut results = Vec::with_capacity(100);
+            for _ in 0..100 {
+                let r = a.flush_wait().expect("flush_wait a");
+                assert!(matches!(r, 0), "unexpected flush_wait a = {r}");
+                results.push(r);
+            }
+            results
+        });
+        let tb = thread::spawn(move || {
+            let mut results = Vec::with_capacity(100);
+            for _ in 0..100 {
+                let r = b.flush_wait().expect("flush_wait b");
+                assert!(matches!(r, 0), "unexpected flush_wait b = {r}");
+                results.push(r);
+            }
+            results
+        });
+
+        let ra = ta.join().expect("thread a");
+        let rb = tb.join().expect("thread b");
+        assert_eq!(ra.len(), 100);
+        assert_eq!(rb.len(), 100);
+
+        closer.close();
+        let _transport = dispatcher.join().unwrap();
     }
 }

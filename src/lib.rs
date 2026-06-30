@@ -56,6 +56,7 @@ pub mod coalesce;
 pub mod control;
 pub mod device;
 pub mod error;
+pub mod gamepad_ring;
 pub mod hid;
 pub mod multitouch;
 pub mod session;

@@ -370,7 +370,7 @@ pub enum AgentAction {
 /// schedulers that need to choose between non-blocking prefix dispatch and a
 /// blocking checked path before constructing a session or touching transport.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPlanSummary {
     /// Number of high-level actions supplied by the caller.
     pub action_count: usize,
@@ -423,6 +423,13 @@ pub struct AgentPlanSummary {
     /// leaves a blocking suffix uninspected for structural errors, matching the
     /// checked prefix dispatch contract.
     pub estimated_try_run_prefix_dispatch_commands: usize,
+    /// Per-action latency budget classification for the plan.
+    ///
+    /// `AgentPlanTiming::estimate_budget` walks every action in the plan,
+    /// sums per-variant latency constants, and classifies the total against
+    /// the warn / over-budget thresholds. Always populated so callers can
+    /// inspect the budget without re-walking the plan.
+    pub timing: AgentPlanTiming,
 }
 
 /// Reason a bounded non-blocking prefix analysis stopped before accepting more
@@ -619,6 +626,8 @@ impl AgentPlanSummary {
             0
         };
 
+        let timing = AgentPlanTiming::estimate_budget(actions);
+
         Self {
             action_count: actions.len(),
             first_structural_error,
@@ -633,6 +642,7 @@ impl AgentPlanSummary {
             estimated_try_run_dispatch_commands,
             estimated_try_queue_prefix_dispatch_commands,
             estimated_try_run_prefix_dispatch_commands,
+            timing,
         }
     }
 
@@ -1701,5 +1711,254 @@ impl AgentAction {
         command_bound: usize,
     ) -> AgentPlanBoundedPrefix {
         PlanCommandEstimator::bounded_try_run_prefix(actions, command_bound)
+    }
+}
+
+/// Total plan-time budget classification — colors a plan before run.
+/// Computed in `AgentPlanTiming::estimate_budget` from per-action
+/// latency constants. The thresholds are conservative defaults:
+/// 50ms warn, 200ms over-budget. Plan-act loops in a 100ms cadence
+/// need to know if the plan fits before scheduling the next iteration.
+#[allow(clippy::enum_variant_names)] // `Budget` is the noun being classified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanBudget {
+    /// Total time fits well under the warn threshold.
+    OkBudget { total_ms: u32 },
+    /// Total time exceeds warn but stays under over-budget. Plan will likely starve the loop.
+    WarnBudget {
+        total_ms: u32,
+        warn_threshold_ms: u32,
+    },
+    /// Total time exceeds over-budget threshold. Reject or split the plan.
+    OverBudget {
+        total_ms: u32,
+        over_threshold_ms: u32,
+        overage_ms: u32,
+    },
+}
+
+/// Per-action latency model. Returned by `estimate_budget` so the
+/// caller can inspect per-step timings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentPlanTiming {
+    pub budget: PlanBudget,
+    pub per_action_ms: Vec<u32>,
+}
+
+impl AgentPlanTiming {
+    pub const WARN_THRESHOLD_MS: u32 = 50;
+    pub const OVER_THRESHOLD_MS: u32 = 200;
+
+    // Per-action latency model. Constants are conservative local
+    // estimates of dispatcher round-trip + transport time for each
+    // variant. They are intentionally coarse: this is a preflight
+    // budget classifier, not a runtime clock.
+    const TAP_MS: u32 = 1;
+    const SWIPE_MS: u32 = 4;
+    const SCROLL_MS: u32 = 2;
+    const TYPE_TEXT_MS: u32 = 2;
+    const KEY_MS: u32 = 1;
+    const MOUSE_MS: u32 = 1;
+    const GAMEPAD_FRAME_MS: u32 = 0;
+    const GAMEPAD_FRAME_BATCH_MS: u32 = 0;
+    const THREE_FINGER_SCREENSHOT_MS: u32 = 8;
+    const LAUNCH_APP_MS: u32 = 10;
+    const AI_QUERY_MS: u32 = 50;
+    const FLUSH_MS: u32 = 1;
+    const DEFAULT_MS: u32 = 1;
+
+    pub fn estimate_budget(actions: &[AgentAction]) -> Self {
+        let per_action_ms: Vec<u32> = actions.iter().map(Self::action_latency_ms).collect();
+        let total_ms = per_action_ms.iter().copied().sum::<u32>();
+        let budget = Self::classify_budget(total_ms);
+        Self {
+            budget,
+            per_action_ms,
+        }
+    }
+
+    fn action_latency_ms(action: &AgentAction) -> u32 {
+        match action {
+            // tap* family
+            AgentAction::Tap { .. }
+            | AgentAction::TapPointer { .. }
+            | AgentAction::TapPoint { .. }
+            | AgentAction::TapPointPointer { .. }
+            | AgentAction::TapRect { .. }
+            | AgentAction::TapRectAt { .. }
+            | AgentAction::TapRectPointer { .. }
+            | AgentAction::TapRectAtPointer { .. }
+            | AgentAction::DoubleTap { .. }
+            | AgentAction::DoubleTapPointer { .. }
+            | AgentAction::DoubleTapPoint { .. }
+            | AgentAction::DoubleTapPointPointer { .. }
+            | AgentAction::DoubleTapRect { .. }
+            | AgentAction::DoubleTapRectAt { .. }
+            | AgentAction::DoubleTapRectPointer { .. }
+            | AgentAction::DoubleTapRectAtPointer { .. } => Self::TAP_MS,
+            // swipe* + pinch
+            AgentAction::Swipe { .. }
+            | AgentAction::SwipePointer { .. }
+            | AgentAction::SwipePoints { .. }
+            | AgentAction::SwipePointsPointer { .. }
+            | AgentAction::SwipeRect { .. }
+            | AgentAction::SwipeRectPointer { .. }
+            | AgentAction::Pinch { .. }
+            | AgentAction::PinchPoints { .. } => Self::SWIPE_MS,
+            // scroll* + scroll/mouse/touch batches
+            AgentAction::Scroll { .. }
+            | AgentAction::ScrollPoint { .. }
+            | AgentAction::ScrollRect { .. }
+            | AgentAction::ScrollRectAt { .. }
+            | AgentAction::ScrollBatch { .. } => Self::SCROLL_MS,
+            // type text (both modes)
+            AgentAction::TypeText(_) | AgentAction::TypeTextStrict(_) => Self::TYPE_TEXT_MS,
+            // key/keyboard families
+            AgentAction::Key { .. }
+            | AgentAction::KeyTap { .. }
+            | AgentAction::KeyboardChord { .. }
+            | AgentAction::KeyBatch { .. }
+            | AgentAction::InjectKeycode { .. }
+            | AgentAction::AndroidKeyTap { .. }
+            | AgentAction::AndroidKeyBatch { .. }
+            | AgentAction::BackOrScreenOn { .. }
+            | AgentAction::PressHome
+            | AgentAction::PressBack
+            | AgentAction::OpenRecents
+            | AgentAction::VolumeUp
+            | AgentAction::VolumeDown
+            | AgentAction::VolumeMute => Self::KEY_MS,
+            // mouse_* + raw touch
+            AgentAction::MouseMotion { .. }
+            | AgentAction::MouseButtons { .. }
+            | AgentAction::MouseScroll { .. }
+            | AgentAction::MouseBatch { .. }
+            | AgentAction::CancelTouch { .. }
+            | AgentAction::TouchFrames { .. } => Self::MOUSE_MS,
+            // long press variants use the swipe bucket: a duration
+            // already declares its own cost, and the dispatch work
+            // matches a swipe.
+            AgentAction::LongPress { .. }
+            | AgentAction::LongPressPointer { .. }
+            | AgentAction::LongPressPoint { .. }
+            | AgentAction::LongPressPointPointer { .. }
+            | AgentAction::LongPressRect { .. }
+            | AgentAction::LongPressRectAt { .. }
+            | AgentAction::LongPressRectPointer { .. }
+            | AgentAction::LongPressRectAtPointer { .. } => Self::SWIPE_MS,
+            // gamepad frames are fire-and-forget
+            AgentAction::GamepadFrame { .. }
+            | AgentAction::GamepadFrameUnchecked { .. }
+            | AgentAction::GamepadButton { .. }
+            | AgentAction::GamepadButtons { .. }
+            | AgentAction::GamepadPackedFrame { .. } => Self::GAMEPAD_FRAME_MS,
+            AgentAction::GamepadFrameBatch { .. }
+            | AgentAction::GamepadFrameBatchUnchecked { .. }
+            | AgentAction::GamepadPackedFrameBatch { .. } => Self::GAMEPAD_FRAME_BATCH_MS,
+            // three finger screenshot + launch app
+            AgentAction::ThreeFingerScreenshot => Self::THREE_FINGER_SCREENSHOT_MS,
+            AgentAction::LaunchApp(_) => Self::LAUNCH_APP_MS,
+            // ai query
+            AgentAction::AiQuery { .. } => Self::AI_QUERY_MS,
+            // wait, flush
+            AgentAction::Wait(duration) => duration.as_millis() as u32,
+            AgentAction::Flush => Self::FLUSH_MS,
+            // everything else
+            _ => Self::DEFAULT_MS,
+        }
+    }
+
+    fn classify_budget(total_ms: u32) -> PlanBudget {
+        if total_ms > Self::OVER_THRESHOLD_MS {
+            PlanBudget::OverBudget {
+                total_ms,
+                over_threshold_ms: Self::OVER_THRESHOLD_MS,
+                overage_ms: total_ms - Self::OVER_THRESHOLD_MS,
+            }
+        } else if total_ms > Self::WARN_THRESHOLD_MS {
+            PlanBudget::WarnBudget {
+                total_ms,
+                warn_threshold_ms: Self::WARN_THRESHOLD_MS,
+            }
+        } else {
+            PlanBudget::OkBudget { total_ms }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timing_ok_budget() {
+        let actions = [
+            AgentAction::tap_point(AgentPoint::new(10, 20)),
+            AgentAction::tap_point(AgentPoint::new(30, 40)),
+            AgentAction::tap_point(AgentPoint::new(50, 60)),
+            AgentAction::tap_point(AgentPoint::new(70, 80)),
+            AgentAction::tap_point(AgentPoint::new(90, 100)),
+        ];
+        let timing = AgentPlanTiming::estimate_budget(&actions);
+        assert_eq!(timing.budget, PlanBudget::OkBudget { total_ms: 5 });
+        assert_eq!(timing.per_action_ms, vec![1, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn test_timing_warn_budget() {
+        let actions: Vec<AgentAction> = (0..30)
+            .map(|_| AgentAction::swipe((10, 20), (30, 40), 2))
+            .collect();
+        let timing = AgentPlanTiming::estimate_budget(&actions);
+        assert_eq!(
+            timing.budget,
+            PlanBudget::WarnBudget {
+                total_ms: 120,
+                warn_threshold_ms: AgentPlanTiming::WARN_THRESHOLD_MS,
+            }
+        );
+        assert_eq!(timing.per_action_ms.len(), 30);
+        assert!(timing.per_action_ms.iter().all(|ms| *ms == 4));
+    }
+
+    #[test]
+    fn test_timing_over_budget() {
+        let actions: Vec<AgentAction> = (0..30).map(|_| AgentAction::query_ai(0)).collect();
+        let timing = AgentPlanTiming::estimate_budget(&actions);
+        assert_eq!(
+            timing.budget,
+            PlanBudget::OverBudget {
+                total_ms: 1_500,
+                over_threshold_ms: AgentPlanTiming::OVER_THRESHOLD_MS,
+                overage_ms: 1_500 - AgentPlanTiming::OVER_THRESHOLD_MS,
+            }
+        );
+        assert_eq!(timing.per_action_ms.len(), 30);
+        assert!(timing.per_action_ms.iter().all(|ms| *ms == 50));
+    }
+
+    #[test]
+    fn test_timing_wait_action() {
+        let actions = [AgentAction::wait(Duration::from_millis(75))];
+        let timing = AgentPlanTiming::estimate_budget(&actions);
+        assert_eq!(timing.per_action_ms, vec![75]);
+        assert_eq!(
+            timing.budget,
+            PlanBudget::WarnBudget {
+                total_ms: 75,
+                warn_threshold_ms: AgentPlanTiming::WARN_THRESHOLD_MS,
+            }
+        );
+    }
+
+    #[test]
+    fn test_timing_in_analyze() {
+        let actions = [
+            AgentAction::tap_point(AgentPoint::new(10, 20)),
+            AgentAction::Flush,
+        ];
+        let summary = AgentPlanSummary::analyze(&actions);
+        assert_eq!(summary.timing.budget, PlanBudget::OkBudget { total_ms: 2 });
+        assert_eq!(summary.timing.per_action_ms, vec![1, 1]);
     }
 }

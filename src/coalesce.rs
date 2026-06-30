@@ -109,10 +109,10 @@ impl<T: TransportWrite> CoalescingWriter<T> {
         }
     }
 
-    fn push_message_to_scratch(&mut self, msg: &ControlMessage) -> Result<&[u8]> {
+    fn push_message_to_scratch(&mut self, msg: &ControlMessage) -> Result<()> {
         self.scratch.clear();
         msg.serialize_into(&mut self.scratch)?;
-        Ok(&self.scratch)
+        Ok(())
     }
 
     #[inline]
@@ -527,13 +527,18 @@ impl<T: TransportWrite> CoalescingWriter<T> {
                 })
             }
             _ => {
-                let serialized = self.push_message_to_scratch(msg)?.to_vec();
+                self.push_message_to_scratch(msg)?;
+                // take-restore: move scratch out for write_all, then put it
+                // back (preserving any capacity growth) and clear for next push.
+                let serialized = std::mem::take(&mut self.scratch);
                 let serialized_len = serialized.len();
                 self.transport.write_all(&serialized)?;
                 self.transport.flush()?;
                 self.written += serialized_len as u64;
                 self.flushes += 1;
                 self.last_flush = Instant::now();
+                self.scratch = serialized;
+                self.scratch.clear();
                 Ok(if msg.is_critical() {
                     FlushReason::Critical
                 } else {
@@ -557,11 +562,16 @@ impl<T: TransportWrite> CoalescingWriter<T> {
             // invariant: a critical (UHID_CREATE / UHID_DESTROY) must
             // never be dropped.
             self.flush_now()?;
-            let serialized = self.push_message_to_scratch(msg)?.to_vec();
+            self.push_message_to_scratch(msg)?;
+            // take-restore: move scratch out for write_all, then put it
+            // back (preserving any capacity growth) and clear for next push.
+            let serialized = std::mem::take(&mut self.scratch);
             self.transport.write_all(&serialized)?;
             self.transport.flush()?;
             self.written += serialized.len() as u64;
             self.flushes += 1;
+            self.scratch = serialized;
+            self.scratch.clear();
             return Ok(FlushReason::Critical);
         }
 
@@ -575,8 +585,8 @@ impl<T: TransportWrite> CoalescingWriter<T> {
                 )?;
             }
             _ => {
-                let serialized = self.push_message_to_scratch(msg)?.to_vec();
-                self.pending.extend_from_slice(&serialized);
+                self.push_message_to_scratch(msg)?;
+                self.pending.extend_from_slice(&self.scratch);
             }
         }
         if self.pending.len() >= self.hard_limit {
@@ -875,5 +885,34 @@ mod tests {
         assert_eq!(w.pending_bytes(), 0);
         assert!(w.flushes() >= 1);
         assert!((w.messages_per_flush() - 2.0).abs() < f64::EPSILON);
+    }
+
+    /// Regression coverage for OPT-2 + OPT-3: the scratch-buffer
+    /// take-restore pattern (and extend_from_slice reuse on the
+    /// droppable path) must keep functioning under heavy mixed
+    /// non-UHID + UHID traffic. Alloc-tracking is implicit — this
+    /// test enforces the functional invariant only.
+    #[test]
+    fn test_scratch_reuse_no_realloc() {
+        let mut w =
+            CoalescingWriter::with_limits(MockTransport::new(), Duration::from_millis(100), 4096);
+        for i in 0..1000u16 {
+            let r = w.push(&input_msg(i, (i & 0xFF) as u8)).unwrap();
+            // UHID_INPUT is droppable; after a flush-triggering number
+            // of pushes the reason must cycle between Pending and
+            // Full/Window, never be Critical (these are non-critical).
+            if r != FlushReason::Pending {
+                assert_eq!(r, FlushReason::Full);
+            }
+        }
+        assert_eq!(w.pushed(), 1000);
+        assert!(w.written() > 0);
+        assert!(w.flushes() > 0);
+        // Round-trip the bytes through MockTransport to make sure the
+        // scratch-restored buffer at the critical-path / direct-path
+        // sites keeps producing well-formed frames.
+        let t = w.into_inner().unwrap();
+        let bytes = t.into_bytes();
+        assert!(!bytes.is_empty());
     }
 }

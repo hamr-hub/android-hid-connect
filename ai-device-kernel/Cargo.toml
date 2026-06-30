@@ -1,0 +1,27 @@
+[package]
+name = "ai-device-kernel"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "On-device AI Device Kernel — typed Action + ground truth + Plan + Observation + Memory; 1 binary, 1 port, 1 protocol. v3 redesign per docs/ai-device-kernel-v3-design.md"
+
+[lib]
+name = "ai_device_kernel"
+path = "src/lib.rs"
+
+[dependencies]
+android-hid-protocol = { path = "../android-hid-protocol" }
+serde = { workspace = true }
+postcard = { workspace = true }
+blake3 = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

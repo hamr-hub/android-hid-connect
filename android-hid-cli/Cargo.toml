@@ -1,0 +1,23 @@
+[package]
+name = "ah"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "android-hid CLI — Rust replacement for `hs`, talks to android-hid-daemon (or scrcpy UHID fallback) via android-hid-agent"
+
+[[bin]]
+name = "ah"
+path = "src/main.rs"
+
+[dependencies]
+android-hid-protocol = { path = "../android-hid-protocol" }
+android-hid-agent = { path = "../android-hid-agent" }
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "android-hid"
+version = "0.1.0"
+description = "Python SDK for android-hid — talks to android-hid-daemon (or scrcpy UHID fallback) via android-hid-agent."
+requires-python = ">=3.9"
+license = { text = "MIT OR Apache-2.0" }
+readme = "README.md"
+
+[tool.setuptools]
+packages = ["android_hid"]

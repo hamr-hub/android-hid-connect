@@ -1,0 +1,26 @@
+[package]
+name = "android-hid-py"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Python SDK for android-hid — PyO3 binding over android-hid-agent (Phase 7 will land the real PyO3 surface)"
+
+[lib]
+# cdylib so maturin / setuptools-rust can produce an importable
+# extension module. Phase 1 ships an empty stub.
+crate-type = ["cdylib"]
+name = "android_hid"
+path = "src/lib.rs"
+
+[dependencies]
+android-hid-protocol = { path = "../android-hid-protocol" }
+android-hid-agent = { path = "../android-hid-agent" }
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

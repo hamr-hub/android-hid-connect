@@ -1,11 +1,58 @@
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "android-hid-protocol",
+    "android-hid-daemon",
+    "android-hid-agent",
+    "android-hid-cli",
+    "android-hid-py",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/android-hid-connect"
+
+[workspace.dependencies]
+thiserror = "2"
+bytes = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "sync", "time"] }
+criterion = { version = "0.8", default-features = false }
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Release profile shared by every member. CLI and daemon binaries benefit
+# most from `opt-level = "z"` + LTO + strip; the root lib crate is
+# unaffected because it has no release-specific binaries.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+overflow-checks = false
+
+# ---------------------------------------------------------------------------
+# Existing crate: byte-exact scrcpy UHID control surface.
+# This file is both the workspace root AND a workspace member — the existing
+# crate still builds from this directory with no source changes.
+# ---------------------------------------------------------------------------
+
 [package]
 name = "android-hid-connect"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.87"
+edition.workspace = true
+rust-version.workspace = true
 description = "Rust port of scrcpy's UHID control protocol — drive Android via HID over scrcpy-server control socket"
-license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/android-hid-connect"
+license.workspace = true
+repository.workspace = true
 readme = "README.md"
 keywords = ["android", "scrcpy", "uhid", "hid", "automation"]
 categories = ["api-bindings", "hardware-support"]
@@ -15,12 +62,12 @@ name = "android_hid_connect"
 path = "src/lib.rs"
 
 [dependencies]
-thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "rt", "sync", "time"], optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
-bytes = "1"
-criterion = { version = "0.8", default-features = false }
+bytes = { workspace = true }
+criterion = { workspace = true }
 
 [[bench]]
 name = "uhid_throughput"
@@ -30,3 +77,6 @@ harness = false
 default = []
 std = []
 tokio = ["dep:tokio"]
+
+[lints]
+workspace = true

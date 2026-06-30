@@ -1,0 +1,23 @@
+[package]
+name = "android-hid-agent"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Host-side typed Rust facade — talks to android-hid-daemon (preferred) or scrcpy UHID (fallback)"
+
+[lib]
+name = "android_hid_agent"
+path = "src/lib.rs"
+
+[dependencies]
+android-hid-protocol = { path = "../android-hid-protocol" }
+android-hid-connect = { path = "../" }
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

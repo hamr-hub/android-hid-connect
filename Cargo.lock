@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "ah"
+version = "0.1.0"
+dependencies = [
+ "android-hid-agent",
+ "android-hid-protocol",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21,6 +29,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "android-hid-agent"
+version = "0.1.0"
+dependencies = [
+ "android-hid-connect",
+ "android-hid-protocol",
+]
+
+[[package]]
 name = "android-hid-connect"
 version = "0.1.0"
 dependencies = [
@@ -28,6 +44,28 @@ dependencies = [
  "criterion",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "android-hid-daemon"
+version = "0.1.0"
+dependencies = [
+ "android-hid-protocol",
+]
+
+[[package]]
+name = "android-hid-protocol"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
+name = "android-hid-py"
+version = "0.1.0"
+dependencies = [
+ "android-hid-agent",
+ "android-hid-protocol",
 ]
 
 [[package]]

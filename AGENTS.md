@@ -10,6 +10,21 @@
 
 `android-hid-connect` 是一个 **Rust 库 crate**(不是 CLI,不是 service),目的是把 scrcpy 客户端 C 源码中控制协议相关部分 — 22 种 control message + 3 种 AI 扩展 + 3 种 HID 设备驱动 — 用 Rust 重写一遍。
 
+### Workspace 布局 (2026-06-29 起)
+
+本目录同时是 **Cargo workspace root** 和一个 workspace member(`android-hid-connect` 库本体)。byte-exact HID core 仍然位于本目录的 `src/`,API 与公开 re-export 完全不变;新增的 5 个 sibling crate 放在同级的 `android-hid-{protocol,daemon,agent,cli,py}/` 子目录,用于补齐 handsets 同等能力(a11y / 截图 / pm/am / 文件 / 等待 / provider / 流)。
+
+| crate | 角色 | 依赖方向 |
+| ----- | ---- | -------- |
+| `android-hid-connect` (root) | byte-exact scrcpy UHID core | — |
+| `android-hid-protocol` | wire 协议类型(verb / error / frame / k=v / version)| 无 |
+| `android-hid-daemon` | 设备端 daemon 库(以后交叉编译进 Android 进程) | protocol |
+| `android-hid-agent` | host 侧 typed Rust facade(daemon 优先 + scrcpy fallback) | protocol + root crate |
+| `android-hid-cli` (`ah`) | host 侧 CLI 入口 | protocol + agent |
+| `android-hid-py` (`android_hid`) | PyO3 binding(Phase 7 落地)| protocol + agent |
+
+本 `AGENTS.md` 只约束 root crate(`src/` 字节布局、`hid`/`control`/`ai` 纯度、batcher 等);每个 sibling crate 自己的 `AGENTS.md`(后续 phase 加入)负责该 crate 内部规则。
+
 四件事不能破:
 
 | # | 不可破 | 由谁保证 |
@@ -27,13 +42,14 @@
 
 ```
 android-hid-connect/
-├── Cargo.toml                  # crate 描述;依赖必须最小
+├── Cargo.toml                  # workspace root + 自身 lib 描述(本 crate 的字节布局锁死)
+├── Cargo.lock                  # workspace 共享
 ├── README.md                   # 协议概览 + 高级 API 演示 + 真实 E2E 接入步骤
 ├── ACCEPTANCE.md               # AC-C/H/S/T/R 验收点 + 真机回归记录 + 历史 bug
-├── AGENTS.md                   # ← 本文件
+├── AGENTS.md                   # ← 本文件(只约束本 crate;sibling crate 见各自 AGENTS.md)
 ├── CHANGELOG.md                # keep-a-changelog 格式,release-please 会读
 ├── LICENSE*                    # MIT OR Apache-2.0
-├── src/                        # 库源码(见 §2.2)
+├── src/                        # byte-exact HID core(见 §2.2)
 ├── examples/                   # 可运行示例,演示单一能力点(见 §2.3)
 ├── tests/                      # 集成测试(见 §2.4)
 ├── benches/                    # criterion 基准(见 §2.5)
@@ -44,7 +60,13 @@ android-hid-connect/
 │   ├── scrcpy-protocol-compatibility.md
 │   ├── ai-agent-integration.md
 │   ├── development.md
-│   └── comparison-with-handsets.md   # 已有,跨项目对比
+│   ├── comparison-with-handsets.md   # 已有,跨项目对比
+│   └── roadmap-exceed-handsets.md    # 7-phase 实施路线图
+├── android-hid-protocol/       # wire verb / error / frame / k=v / version — 最低层
+├── android-hid-daemon/         # on-device 库(后续交叉编译进 Android 进程)
+├── android-hid-agent/          # host 侧 typed Rust facade(daemon 优先 + scrcpy fallback)
+├── android-hid-cli/            # `ah` 二进制,瘦壳套在 agent 之上
+├── android-hid-py/             # PyO3 binding 骨架,Phase 7 填实
 └── .github/
     ├── workflows/ci.yml        # 3-OS 矩阵 + MSRV
     ├── dependabot.yml          # weekly cargo deps
@@ -164,6 +186,22 @@ src/
 - 跨项目对比(`comparison-with-handsets.md`)单独保留,不属于本 crate 内部。
 - 文档代码示例用 ```rust,no_run 或 ```text,不要在文档里跑真实命令的输出。
 - 文档里的数字(测试数、版本号、跑分日期)**要可复现**:改了测试数或 scrcpy 版本号,立刻同步更新所有引用它的文档。
+
+### 2.7 兄弟 crate 协作约束
+
+sibling crate 在 `android-hid-{protocol,daemon,agent,cli,py}/`,每个都有自己的 `Cargo.toml`。它们不在本 `AGENTS.md` 的硬约束范围内,但依赖方向和最低规则如下:
+
+| crate | 角色 | 依赖方向 | 最低规则 |
+| ----- | ---- | -------- | -------- |
+| `android-hid-protocol` | wire 协议类型(verb / error / frame / k=v / version),无 I/O、无 FFI | — | 纯函数 / `unsafe_code = "forbid"` / `rust_2018_idioms` warn |
+| `android-hid-daemon` | 设备端 daemon 库(运行在 Android 进程里) | → protocol | 不依赖 root crate;Phase 2+ 引入 std / binder;后续交叉编译 |
+| `android-hid-agent` | host 侧 typed Rust facade;首选 daemon 后端,scrcpy 后端 fallback | → protocol + 根 crate | 不暴露 root crate 的 `HidClient` / `HidSession` 内部细节;agent 公开 API 用 typed plan 形态 |
+| `android-hid-cli` (`ah`) | 瘦 binary:argument parsing + 调 `android-hid-agent` | → protocol + agent | `[profile.release]` 继承 workspace 的小尺寸设置 |
+| `android-hid-py` (`android_hid`) | PyO3 binding(Phase 7 填实)| → protocol + agent | `crate-type = ["cdylib"]`;Phase 1 不引入 `pyo3` dep,Phase 7 加 `pyo3` 时用 optional feature gate |
+
+依赖方向**只能**向下(root → protocol;daemon → protocol;agent → protocol + root crate;cli → agent;py → agent)。**禁止**反向(例如 daemon 引 root crate,cli 引 daemon,protocol 引 agent)。任何反向依赖都打回 PR。
+
+每个 sibling crate 自己的 lint 由各 crate 的 `Cargo.toml` 显式声明(目前都是 `unsafe_code = "forbid"` + `rust_2018_idioms` warn + `clippy::all` warn)。
 
 ---
 

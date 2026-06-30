@@ -19,10 +19,19 @@
 - `docs/scrcpy-protocol-compatibility.md` — scrcpy v2.7 byte-exact 契约 + 跟踪流程
 - `docs/ai-agent-integration.md` — LLM agent 集成指南(observe-plan-act 循环、typed plan、感知 API)
 - `docs/development.md` — 本地开发循环 + 真机 E2E + CI 矩阵
+- `docs/roadmap-exceed-handsets.md` — 7-phase 实施路线图(workspace 布局 + 能力矩阵)
+- 5 个 sibling crate skeleton:`android-hid-protocol`(verb / error / frame / k=v / version)、`android-hid-daemon`(on-device 库)、`android-hid-agent`(host facade)、`android-hid-cli`(`ah` binary)、`android-hid-py`(`cdylib` 占位)
+- Workspace-level shared `[profile.release]`(opt-level = "z", lto = "fat", panic = "abort", strip) — 镜像 `handsets-cli` 让 `ah` 出小尺寸静态二进制
+- Workspace-level lint 集合:各 sibling crate `unsafe_code = "forbid"` + `rust_2018_idioms` warn;root crate 保持现状(几处 `unsafe` 是 byte-exact 兼容垫片)
+- `docs/INDEX.md` "阅读路径 D — Rust 替代 handsets" 段,指向 roadmap
+- `README.md` Documentation 段加入 `docs/roadmap-exceed-handsets.md` 条目
 
 ### Changed
 
-(none)
+- **Convert to Cargo workspace** — root `Cargo.toml` 现在既是 root 也是 workspace member;`members = [".", "android-hid-protocol", "android-hid-daemon", "android-hid-agent", "android-hid-cli", "android-hid-py"]`,`resolver = "2"`。无 breaking change:既有 byte-exact HID core 的 `Cargo.toml` 字段、API、`pub use` 全部不动,453 个既有测试 + 35 个新测试全部通过。
+- `AGENTS.md` §1(项目定位)+ §2.1(顶层布局)+ 新增 §2.7(兄弟 crate 协作约束),描述 workspace 布局和依赖方向(daemon → protocol;agent → protocol + 根 crate;cli → agent;py → agent)
+- `Cargo.toml` `[dependencies]` / `[dev-dependencies]` 改用 `workspace = true` 共享;`edition` / `rust-version` / `license` / `repository` 全部 `.workspace = true`
+- `Cargo.toml` 新增 `[profile.release]`(放在 root,所有 member 共享)
 
 ### Fixed
 

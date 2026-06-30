@@ -21,6 +21,7 @@
 | [`ai-agent-integration.md`](ai-agent-integration.md) | LLM / agent runtime 怎么用 `AgentControlSession` | 把本 crate 嵌入 observe-plan-act 循环 |
 | [`development.md`](development.md) | 本地开发循环 + 真机 E2E 步骤 + CI 矩阵 | 提 PR 前自检 / 跑分对比 |
 | [`comparison-with-handsets.md`](comparison-with-handsets.md) | 本 crate vs `handsets` 仓库的多维度对比 | 选型决策(精度 HID vs a11y 自动化) |
+| [`roadmap-exceed-handsets.md`](roadmap-exceed-handsets.md) | 7 个 phase 的实施路线图,包含 workspace 布局和能力矩阵 | 计划 handsets 功能的 Rust 替代 / 选 Phase 切入点 |
 
 ## 配套文件
 
@@ -56,6 +57,13 @@
 1. [`docs/comparison-with-handsets.md`](comparison-with-handsets.md) → 本 crate vs `handsets`
 2. [`README.md`](../README.md) §"What this crate does" → 能力矩阵摘录
 3. [`ACCEPTANCE.md`](../ACCEPTANCE.md) §9 → 真机回归 checklist
+
+### 路径 D — "我想做 handsets 的 Rust 替代"
+
+1. [`roadmap-exceed-handsets.md`](roadmap-exceed-handsets.md) → 7-phase 实施路线图 + workspace 布局 + 能力矩阵
+2. [`README.md`](../README.md) → 当前公开 API 与 byte-exact 契约
+3. [`AGENTS.md`](../AGENTS.md) §2.7 → sibling crate 依赖方向 + 最低规则
+4. [`docs/architecture.md`](architecture.md) → 模块分层,用于评估新功能落在哪一层
 
 ---
 

@@ -1,0 +1,22 @@
+[package]
+name = "android-hid-protocol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wire-level protocol types shared by android-hid-{daemon,agent,cli,py} — verbs, error codes, frames, k=v, version"
+
+[lib]
+name = "android_hid_protocol"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

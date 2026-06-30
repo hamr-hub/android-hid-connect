@@ -1,0 +1,26 @@
+[package]
+name = "android-hid-daemon"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "On-device daemon library — runs in an Android process, serves the android-hid wire protocol"
+
+[lib]
+name = "android_hid_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hsd"
+path = "src/main.rs"
+
+[dependencies]
+android-hid-protocol = { path = "../android-hid-protocol" }
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

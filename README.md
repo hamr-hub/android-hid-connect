@@ -21,6 +21,7 @@ control socket.
 | [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) | LLM / agent runtime 集成指南 |
 | [`docs/development.md`](docs/development.md) | 本地开发循环 + 真机 E2E + CI 矩阵 |
 | [`docs/comparison-with-handsets.md`](docs/comparison-with-handsets.md) | 与 `handsets` 仓库的多维度对比 |
+| [`docs/roadmap-exceed-handsets.md`](docs/roadmap-exceed-handsets.md) | 7-phase 实施路线图 + workspace 布局 + 能力矩阵 |
 
 第一次接触本 crate:先读本文件 → 然后 [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) 或 [`docs/architecture.md`](docs/architecture.md)。
 

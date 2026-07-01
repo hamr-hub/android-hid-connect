@@ -1,11 +1,11 @@
 //! `bridge` — the typed `Action` to byte-exact UHID execution path.
 //!
-//! The kernel's typed `Action` surface (12 typed writes
-//! + 6 Phase 4/5 typed reads per v3 §3.6.3) terminates here.
+//! The kernel's typed `Action` surface terminates here:
+//! 12 typed writes plus 6 Phase 4/5 typed reads per v3 §3.6.3.
 //! The single function `ActionInjector::apply` turns an
 //! `Action` into Android input by delegating to the byte-exact
 //! UHID drivers in `android-hid-connect`. No daemon, no shell, no
-//! `adb exec-out` — the kernel-internal intent to UHID hot path
+//! `adb exec-out`. The kernel-internal intent to UHID hot path
 //! runs entirely in-process.
 //!
 //! ## Why this lives here (not in `android-hid-connect`)

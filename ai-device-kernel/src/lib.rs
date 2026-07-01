@@ -69,8 +69,11 @@ pub mod predicate;
 pub mod predicate_engine;
 pub mod predicate_wait;
 pub mod protocol;
+pub mod scenario_library;
 pub mod session_state;
 pub mod state;
+pub mod chunk_planner;
+pub mod selector_cache;
 pub mod stream_engine;
 pub mod ui_repr;
 

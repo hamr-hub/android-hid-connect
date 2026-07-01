@@ -225,10 +225,7 @@ impl StreamEngine {
     /// Produce one observation. Returns the assigned `seq`.
     /// Automatically fans out to every subscriber whose filter
     /// accepts the observation.
-    pub fn produce(
-        &mut self,
-        obs_factory: impl FnOnce(u64) -> Observation,
-    ) -> u64 {
+    pub fn produce(&mut self, obs_factory: impl FnOnce(u64) -> Observation) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
         let obs = obs_factory(seq);
@@ -296,7 +293,10 @@ impl StreamEngine {
         let mut out: Vec<DeviceEvent> = Vec::new();
         for obs in self.since_seq(since_seq) {
             for ev in &obs.events {
-                if !out.iter().any(|e| std::mem::discriminant(e) == std::mem::discriminant(ev)) {
+                if !out
+                    .iter()
+                    .any(|e| std::mem::discriminant(e) == std::mem::discriminant(ev))
+                {
                     out.push(ev.clone());
                 }
             }
@@ -416,7 +416,10 @@ mod tests {
         let sub = engine.subscriber(handle).unwrap();
         assert_eq!(sub.pending(), 2);
         let first = engine.subscriber_mut(handle).unwrap().poll().unwrap();
-        assert!(matches!(first.events[0], DeviceEvent::ActivityResumed { .. }));
+        assert!(matches!(
+            first.events[0],
+            DeviceEvent::ActivityResumed { .. }
+        ));
     }
 
     #[test]
@@ -497,10 +500,8 @@ mod tests {
         let events: Vec<DeviceEvent> = engine.events_since(0);
         // Two observations → caller-side wants one per kind.
         // `events_since` already dedups via discriminant.
-        let unique_kinds: std::collections::HashSet<_> = events
-            .iter()
-            .map(std::mem::discriminant)
-            .collect();
+        let unique_kinds: std::collections::HashSet<_> =
+            events.iter().map(std::mem::discriminant).collect();
         assert_eq!(
             unique_kinds.len(),
             events.len(),
@@ -529,7 +530,11 @@ mod tests {
             events: vec![],
             ..Default::default()
         });
-        let obs = engine.subscriber_mut(h).unwrap().poll().expect("got frame obs");
+        let obs = engine
+            .subscriber_mut(h)
+            .unwrap()
+            .poll()
+            .expect("got frame obs");
         let frame = obs.frame.expect("frame snapshot preserved");
         assert_eq!(frame.width, 1080);
         assert!(frame.is_keyframe);

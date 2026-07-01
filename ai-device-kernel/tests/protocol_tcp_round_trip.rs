@@ -34,9 +34,9 @@ use std::net::{TcpListener, TcpStream};
 use std::thread;
 
 use ai_device_kernel::{
-    Frame, ReplyPayload, RequestPayload, Verb, Action, ActionId, ActionResult,
-    GroundTruth, Predicate, PredicateHandle, PredicateResult, Observation,
-    DeviceState, ObservationComponent, FrameFlags,
+    Action, ActionId, ActionResult, DeviceState, Frame, FrameFlags, GroundTruth, Observation,
+    ObservationComponent, Predicate, PredicateHandle, PredicateResult, ReplyPayload,
+    RequestPayload, Verb,
 };
 
 /// Bind a localhost listener on an ephemeral port and return the
@@ -107,26 +107,28 @@ fn read_frame(sock: &mut TcpStream) -> std::io::Result<Frame> {
     };
     let mut payload = vec![0u8; payload_len];
     sock.read_exact(&mut payload)?;
-    Ok(Frame { verb, flags, payload })
+    Ok(Frame {
+        verb,
+        flags,
+        payload,
+    })
 }
 
 #[test]
 fn action_request_round_trips_over_loopback_tcp() {
     let (listener, addr) = bind_loopback();
-    let _ = spawn_one_shot_server(listener, |req| {
-        match req {
-            RequestPayload::Action { action, .. } => {
-                let landed = !matches!(action, Action::InjectRaw { .. });
-                ReplyPayload::Action(ActionResult {
-                    id: ActionId(1),
-                    landed,
-                    ground_truth: GroundTruth::default(),
-                    elapsed_ms: 1,
-                    ..Default::default()
-                })
-            }
-            other => panic!("unexpected request shape: {other:?}"),
+    let _ = spawn_one_shot_server(listener, |req| match req {
+        RequestPayload::Action { action, .. } => {
+            let landed = !matches!(action, Action::InjectRaw { .. });
+            ReplyPayload::Action(ActionResult {
+                id: ActionId(1),
+                landed,
+                ground_truth: GroundTruth::default(),
+                elapsed_ms: 1,
+                ..Default::default()
+            })
         }
+        other => panic!("unexpected request shape: {other:?}"),
     });
 
     let mut client = TcpStream::connect(addr).expect("connect");
@@ -158,19 +160,17 @@ fn action_request_round_trips_over_loopback_tcp() {
 #[test]
 fn query_request_round_trips_over_loopback_tcp() {
     let (listener, addr) = bind_loopback();
-    let _ = spawn_one_shot_server(listener, |req| {
-        match req {
-            RequestPayload::Query { .. } => ReplyPayload::Query(Observation {
-                seq: 1,
-                timestamp_ms: 100,
-                a11y: None,
-                frame: None,
-                state: DeviceState::unknown(100),
-                events: vec![],
-                foreground_app: None,
-            }),
-            other => panic!("unexpected: {other:?}"),
-        }
+    let _ = spawn_one_shot_server(listener, |req| match req {
+        RequestPayload::Query { .. } => ReplyPayload::Query(Observation {
+            seq: 1,
+            timestamp_ms: 100,
+            a11y: None,
+            frame: None,
+            state: DeviceState::unknown(100),
+            events: vec![],
+            foreground_app: None,
+        }),
+        other => panic!("unexpected: {other:?}"),
     });
 
     let mut client = TcpStream::connect(addr).expect("connect");
@@ -197,54 +197,50 @@ fn query_request_round_trips_over_loopback_tcp() {
 #[test]
 fn plan_request_round_trips_over_loopback_tcp() {
     let (listener, addr) = bind_loopback();
-    let _ = spawn_one_shot_server(listener, |req| {
-        match req {
-            RequestPayload::Plan { id, .. } => {
-                use ai_device_kernel::{PlanResult, StepResult};
-                ReplyPayload::Plan(PlanResult {
-                    plan_id: id,
-                    steps: vec![StepResult {
-                        step_id: ai_device_kernel::StepId(0),
-                        index: 0,
-                        action_result: ActionResult {
-                            id: ActionId(1),
-                            landed: true,
-                            ground_truth: GroundTruth::default(),
-                            elapsed_ms: 1,
-                            ..Default::default()
-                        },
+    let _ = spawn_one_shot_server(listener, |req| match req {
+        RequestPayload::Plan { id, .. } => {
+            use ai_device_kernel::{PlanResult, StepResult};
+            ReplyPayload::Plan(PlanResult {
+                plan_id: id,
+                steps: vec![StepResult {
+                    step_id: ai_device_kernel::StepId(0),
+                    index: 0,
+                    action_result: ActionResult {
+                        id: ActionId(1),
                         landed: true,
-                        error: None,
-                    }],
-                    final_observation: Observation {
-                        seq: 0,
-                        timestamp_ms: 0,
-                        a11y: None,
-                        frame: None,
-                        state: DeviceState::unknown(0),
-                        events: vec![],
-                        foreground_app: None,
+                        ground_truth: GroundTruth::default(),
+                        elapsed_ms: 1,
+                        ..Default::default()
                     },
-                    total_elapsed_ms: 1,
-                    all_landed: true,
-                })
-            }
-            other => panic!("unexpected: {other:?}"),
+                    landed: true,
+                    error: None,
+                }],
+                final_observation: Observation {
+                    seq: 0,
+                    timestamp_ms: 0,
+                    a11y: None,
+                    frame: None,
+                    state: DeviceState::unknown(0),
+                    events: vec![],
+                    foreground_app: None,
+                },
+                total_elapsed_ms: 1,
+                all_landed: true,
+            })
         }
+        other => panic!("unexpected: {other:?}"),
     });
 
     let mut client = TcpStream::connect(addr).expect("connect");
     let request = RequestPayload::Plan {
         id: ai_device_kernel::PlanId(7),
-        plan: ai_device_kernel::Plan::new(vec![ai_device_kernel::PlanStep::new(
-            Action::Wait {
-                predicate: Predicate::SelectorMatches {
-                    selector: "Button".into(),
-                    timeout_ms: 500,
-                },
-                deadline_ms: 500,
+        plan: ai_device_kernel::Plan::new(vec![ai_device_kernel::PlanStep::new(Action::Wait {
+            predicate: Predicate::SelectorMatches {
+                selector: "Button".into(),
+                timeout_ms: 500,
             },
-        )]),
+            deadline_ms: 500,
+        })]),
     };
     let frame = Frame::request(&request);
     client.write_all(&frame.encode()).expect("write");
@@ -272,9 +268,7 @@ fn observe_request_accepts_filter_round_trip() {
         // Echo back an EndOfStream marker so the host stops
         // reading (server-stream simulation).
         match req {
-            RequestPayload::Observe { .. } => {
-                ReplyPayload::EndOfStream { final_seq: 0 }
-            }
+            RequestPayload::Observe { .. } => ReplyPayload::EndOfStream { final_seq: 0 },
             other => panic!("unexpected: {other:?}"),
         }
     });
@@ -313,23 +307,39 @@ fn frame_verb_distinct_postcard_tags() {
     // 4 verbs + EndOfStream. Each verb byte maps to a unique
     // payload tag in the RequestPayload enum.
     let verbs_and_payloads: Vec<(Verb, RequestPayload)> = vec![
-        (Verb::Action, RequestPayload::Action {
-            id: ActionId(0),
-            action: Action::Tap { x: 0, y: 0, deadline_ms: 0 },
-        }),
-        (Verb::Plan, RequestPayload::Plan {
-            id: ai_device_kernel::PlanId(0),
-            plan: ai_device_kernel::Plan::new(vec![]),
-        }),
-        (Verb::Observe, RequestPayload::Observe {
-            since_seq: 0,
-            filter: vec![],
-        }),
-        (Verb::Query, RequestPayload::Query {
-            a11y: true,
-            frame: false,
-            state: false,
-        }),
+        (
+            Verb::Action,
+            RequestPayload::Action {
+                id: ActionId(0),
+                action: Action::Tap {
+                    x: 0,
+                    y: 0,
+                    deadline_ms: 0,
+                },
+            },
+        ),
+        (
+            Verb::Plan,
+            RequestPayload::Plan {
+                id: ai_device_kernel::PlanId(0),
+                plan: ai_device_kernel::Plan::new(vec![]),
+            },
+        ),
+        (
+            Verb::Observe,
+            RequestPayload::Observe {
+                since_seq: 0,
+                filter: vec![],
+            },
+        ),
+        (
+            Verb::Query,
+            RequestPayload::Query {
+                a11y: true,
+                frame: false,
+                state: false,
+            },
+        ),
     ];
     let n = verbs_and_payloads.len();
     let mut tags_seen: Vec<u8> = Vec::new();
@@ -416,8 +426,7 @@ fn observation_component_round_trips() {
     ];
     for c in &all {
         let bytes = postcard::to_allocvec(c).expect("encode");
-        let decoded: ObservationComponent =
-            postcard::from_bytes(&bytes).expect("decode");
+        let decoded: ObservationComponent = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(decoded, *c);
     }
 }

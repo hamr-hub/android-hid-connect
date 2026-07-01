@@ -55,10 +55,13 @@
 pub mod action;
 pub mod bridge;
 pub mod capability;
+pub mod egress;
 pub mod ids;
+pub mod json;
 pub mod memory;
 #[cfg(feature = "sqlite")]
 pub mod memory_sqlite;
+pub mod mock_llm;
 pub mod observation;
 pub mod plan;
 pub mod plan_executor;
@@ -66,12 +69,13 @@ pub mod predicate;
 pub mod predicate_engine;
 pub mod predicate_wait;
 pub mod protocol;
+pub mod session_state;
 pub mod state;
 pub mod stream_engine;
 pub mod ui_repr;
 
 pub use action::{
-    Action, ActionResult, A11yNodeChangeKind, A11yNodeDiff, AtomicErrorCode, FrameDiff,
+    A11yNodeChangeKind, A11yNodeDiff, Action, ActionResult, AtomicErrorCode, FrameDiff,
     GroundTruth, LaunchBy, ObservationComponent, Rect,
 };
 pub use bridge::{ActionInjector, BridgeOutcome};
@@ -79,19 +83,18 @@ pub use capability::{
     Capability, CapabilityContext, CapabilityError, CapabilityName, CapabilityOutput,
     CapabilityRegistry, CapabilityRequirements, ALL_CAPABILITY_NAMES,
 };
+pub use egress::EgressPolicy;
 pub use ids::{ActionId, PlanId, ScreenId, StepId};
+pub use memory::{ActionSequence, Memory};
+#[cfg(feature = "sqlite")]
+pub use memory_sqlite as memory_sqlite_backend;
 pub use observation::{
     A11yTree, DeviceEvent, DeviceState, ForegroundApp, FrameSnapshot, Observation,
 };
 pub use plan::{Plan, PlanResult, PlanStep, StepResult};
-pub use memory::{ActionSequence, Memory};
-#[cfg(feature = "sqlite")]
-pub use memory_sqlite as memory_sqlite_backend;
 pub use plan_executor::{execute, ExecutorCounters, PlanFailure};
 pub use predicate::{EventKind, Predicate, PredicateHandle, PredicateResult};
-pub use predicate_engine::{
-    PredicateEngine, PredicateOutcome, RegisteredPredicate,
-};
+pub use predicate_engine::{PredicateEngine, PredicateOutcome, RegisteredPredicate};
 pub use predicate_wait::{wait_for, WaitOutcome};
 pub use protocol::{Frame, FrameFlags, ReplyPayload, RequestPayload, Verb};
 pub use state::StateModel;
@@ -140,11 +143,7 @@ mod tests {
     fn idle_query_includes_a11y_and_state() {
         let q = idle_query();
         match q {
-            RequestPayload::Query {
-                a11y,
-                frame,
-                state,
-            } => {
+            RequestPayload::Query { a11y, frame, state } => {
                 assert!(a11y);
                 assert!(state);
                 assert!(!frame);

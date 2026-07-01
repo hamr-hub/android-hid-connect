@@ -11,9 +11,9 @@
 //! - Hand-rolled `JsonSchema` impls for IDs (u64 / u32 / hex32)
 
 use ai_device_kernel::{
-    Action, ActionId, ActionResult, AtomicErrorCode, ForegroundApp, FrameSnapshot, GroundTruth,
-    Observation, Plan, PlanId, PredicateHandle, ScreenId, StepId, A11yNodeChangeKind, A11yNodeDiff,
-    DeviceState,
+    A11yNodeChangeKind, A11yNodeDiff, Action, ActionId, ActionResult, AtomicErrorCode, DeviceState,
+    ForegroundApp, FrameSnapshot, GroundTruth, Observation, Plan, PlanId, PredicateHandle,
+    ScreenId, StepId,
 };
 use schemars::schema::Schema;
 use serde_json::Value;
@@ -118,7 +118,10 @@ fn action_result_is_structured_failure_when_landed_false_and_code_set() {
         ..ActionResult::default()
     };
     assert!(r.is_structured_failure());
-    let r2 = ActionResult { landed: true, ..r.clone() };
+    let r2 = ActionResult {
+        landed: true,
+        ..r.clone()
+    };
     assert!(!r2.is_structured_failure());
     let r3 = ActionResult { code: None, ..r };
     assert!(!r3.is_structured_failure());
@@ -274,7 +277,10 @@ fn id_json_schemas_compile() {
     assert_eq!(<ActionId as JsonSchema>::schema_name(), "ActionId");
     assert_eq!(<PlanId as JsonSchema>::schema_name(), "PlanId");
     assert_eq!(<StepId as JsonSchema>::schema_name(), "StepId");
-    assert_eq!(<PredicateHandle as JsonSchema>::schema_name(), "PredicateHandle");
+    assert_eq!(
+        <PredicateHandle as JsonSchema>::schema_name(),
+        "PredicateHandle"
+    );
     assert_eq!(<ScreenId as JsonSchema>::schema_name(), "ScreenId");
 }
 

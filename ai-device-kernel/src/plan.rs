@@ -223,9 +223,7 @@ impl StepResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{
-        Action, A11yNodeChangeKind, GroundTruth, LaunchBy, ObservationComponent,
-    };
+    use crate::action::{A11yNodeChangeKind, Action, GroundTruth, LaunchBy, ObservationComponent};
     use crate::ids::ActionId;
     use crate::observation::{DeviceEvent, DeviceState, FrameSnapshot};
 
@@ -439,8 +437,7 @@ mod tests {
             all_landed: true,
         };
         let bytes = postcard::to_allocvec(&pr).expect("encode");
-        let decoded: PlanResult =
-            postcard::from_bytes(&bytes).expect("decode");
+        let decoded: PlanResult = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(decoded, pr);
         assert_eq!(decoded.first_failure(), None);
     }
@@ -491,8 +488,7 @@ mod tests {
             timeout_ms: 1500,
         });
         let bytes = postcard::to_allocvec(&step).expect("encode");
-        let decoded: PlanStep =
-            postcard::from_bytes(&bytes).expect("decode");
+        let decoded: PlanStep = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(decoded, step);
     }
 

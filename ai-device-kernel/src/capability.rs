@@ -329,8 +329,7 @@ mod tests {
         let cap = RecordingCapability::new("input.test");
         let ctx = TestContext { elapsed_ms: 5 };
         for _ in 0..3 {
-            cap.execute(&ctx, None)
-                .expect("execution should succeed");
+            cap.execute(&ctx, None).expect("execution should succeed");
         }
         assert_eq!(cap.executed(), 3);
     }
@@ -498,8 +497,7 @@ mod tests {
         reg.register(Box::new(RecordingCapability::new("a")));
         reg.register(Box::new(RecordingCapability::new("b")));
         reg.register(Box::new(RecordingCapability::new("c")));
-        let drained: std::collections::HashSet<&'static str> =
-            reg.iter().map(|(k, _)| k).collect();
+        let drained: std::collections::HashSet<&'static str> = reg.iter().map(|(k, _)| k).collect();
         let expected: std::collections::HashSet<&'static str> =
             ["a", "b", "c"].iter().copied().collect();
         assert_eq!(drained, expected);

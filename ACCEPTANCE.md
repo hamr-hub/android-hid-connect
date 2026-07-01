@@ -265,17 +265,30 @@ PASS  server emitted 0 device message(s) total
 | `live_kbd` | GET_CLIPBOARD 真实回包 | `DEVICE_MSG_CLIPBOARD` text=`"pasted-from-ai"`,证明反向通信字节对齐 |
 | `multitouch_10` | 10 指针 multitouch 序列 | exit=0,无 panic |
 
+### 7.5 `adk-bench` 性能验收 (post-ADR-0015)
+
+`cargo run --release -p ai-device-kernel --bin adk-bench` — in-process micro-bench for the kernel-internal intent→UHID hot path. Runs over `MockTransport` (no device needed).
+
+| 跑分日期 | Iterations | p50 | p95 | p99 | max | SLO | Verdict |
+| -------- | ---------- | --- | --- | --- | --- | --- | ------- |
+| 2026-07-01 | 100 (--quick) | 0 µs | 3 µs | 5 µs | 68 µs | p99 < 5000 µs | ✅ PASS |
+| (待跑) | 1000 | - | - | - | - | p99 < 5000 µs | ⏳ |
+
+Host: x86_64-linux, release, opt-level = "z" + lto = "fat" + strip. CI gate (`AC-CI4`): exit code 2 on regression. Real-device hot-path latency vs host-adb is compared in [`docs/perf/real-device-call-flow.md`](../docs/perf/real-device-call-flow.md) (Phase 6.5 baseline: kernel-internal path ~0.78 ms p50, ~850× faster than host-adb path).
+
 ---
 
-## 8. CI 验收 (AC-CI1..AC-CI3)
+## 8. CI 验收 (AC-CI1..AC-CI5)
 
 `.github/workflows/ci.yml` 在 3-OS 矩阵上跑:
 
-| AC | Job | 期望 | 最近一次 (PR #10) |
+| AC | Job | 期望 | 最近一次 (2026-07-01) |
 | -- | --- | ---- | ----------------- |
-| AC-CI1 | `ubuntu-latest` build + test + fmt + clippy | success | ✅ success |
+| AC-CI1 | `ubuntu-latest` build + test + fmt + clippy | success | ✅ success (515 tests pass) |
 | AC-CI2 | `macos-latest` build + test | success | ✅ success |
 | AC-CI3 | `windows-latest` build + test | success | ✅ success |
+| AC-CI4 | `adk-bench` smoke (p99 < 5 ms gate) | exit 0 | ✅ p99 = 5 µs, mean 1.7 µs / sample |
+| AC-CI5 | **AC-V3-7** AI middleware invariant: 1 binary `adk`, 1 port 9008, 1 protocol postcard/4-verb, single AI façade `ai-device-kernel` | grep asserts in CI | ✅ per ADR-0015 |
 
 > 仓库: <https://github.com/hamr-hub/android-hid-connect> (public)。
 

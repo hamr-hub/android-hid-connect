@@ -33,8 +33,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use ai_device_kernel::{
-    Action, ActionId, Predicate,
-    Frame, FrameFlags, ReplyPayload, RequestPayload, Verb,
+    Action, ActionId, Frame, FrameFlags, Predicate, ReplyPayload, RequestPayload, Verb,
 };
 
 /// A single E2E task description as the harness consumes it.
@@ -58,11 +57,7 @@ pub struct Task {
 pub trait LLMProvider {
     /// Given a task description + screen context, return the
     /// next `Action` (or `None` to signal "task complete").
-    fn next_action(
-        &self,
-        task: &Task,
-        screen_context: &str,
-    ) -> Option<Action>;
+    fn next_action(&self, task: &Task, screen_context: &str) -> Option<Action>;
 
     /// Provider name — used in the per-task log line.
     fn name(&self) -> &'static str;
@@ -167,10 +162,14 @@ fn write_action_request(sock: &mut TcpStream, action: &Action) -> std::io::Resul
     sock.write_all(&encoded)?;
     sock.flush()?;
     let (verb, _flags, payload) = read_frame(sock)?;
-    let reply_frame = Frame { verb, flags: FrameFlags::default(), payload };
-    reply_frame.decode_reply().map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("decode: {e}"))
-    })
+    let reply_frame = Frame {
+        verb,
+        flags: FrameFlags::default(),
+        payload,
+    };
+    reply_frame
+        .decode_reply()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("decode: {e}")))
 }
 
 /// Try one task end-to-end. Returns `Ok(true)` on success.
@@ -232,9 +231,7 @@ pub fn canonical_5_tasks() -> HashMap<String, Vec<Action>> {
         vec![
             Launch {
                 target: "com.android.settings/.Settings".into(),
-                by: ai_device_kernel::LaunchBy::Component(
-                    "com.android.settings/.Settings".into(),
-                ),
+                by: ai_device_kernel::LaunchBy::Component("com.android.settings/.Settings".into()),
                 deadline_ms: 5000,
             },
             Wait {
@@ -249,7 +246,11 @@ pub fn canonical_5_tasks() -> HashMap<String, Vec<Action>> {
     m.insert(
         "settings.network".to_string(),
         vec![
-            Tap { x: 540, y: 700, deadline_ms: 1000 },
+            Tap {
+                x: 540,
+                y: 700,
+                deadline_ms: 1000,
+            },
             Wait {
                 predicate: Predicate::Activity {
                     component: "com.android.settings/.SubSettings".into(),
@@ -261,18 +262,21 @@ pub fn canonical_5_tasks() -> HashMap<String, Vec<Action>> {
     );
     m.insert(
         "settings.back".to_string(),
-        vec![
-            Key { code: 4 /* KEYCODE_BACK */, deadline_ms: 1000 },
-        ],
+        vec![Key {
+            code: 4, /* KEYCODE_BACK */
+            deadline_ms: 1000,
+        }],
     );
     m.insert(
         "settings.search".to_string(),
         vec![
-            Key { code: 84 /* KEYCODE_SEARCH */, deadline_ms: 1000 },
+            Key {
+                code: 84, /* KEYCODE_SEARCH */
+                deadline_ms: 1000,
+            },
             Wait {
                 predicate: Predicate::Activity {
-                    component: "com.android.settings.intelligence.search.SearchActivity"
-                        .into(),
+                    component: "com.android.settings.intelligence.search.SearchActivity".into(),
                     timeout_ms: 1000,
                 },
                 deadline_ms: 1000,
@@ -281,9 +285,10 @@ pub fn canonical_5_tasks() -> HashMap<String, Vec<Action>> {
     );
     m.insert(
         "home.gesture".to_string(),
-        vec![
-            Key { code: 3 /* KEYCODE_HOME */, deadline_ms: 1000 },
-        ],
+        vec![Key {
+            code: 3, /* KEYCODE_HOME */
+            deadline_ms: 1000,
+        }],
     );
     m
 }
@@ -307,7 +312,10 @@ fn stub_provider_serves_canonical_actions_in_order() {
         if seen > 10 {
             break;
         }
-        assert!(matches!(a, Action::Launch { .. } | Action::Wait { .. }), "got: {a:?}");
+        assert!(
+            matches!(a, Action::Launch { .. } | Action::Wait { .. }),
+            "got: {a:?}"
+        );
     }
     assert!(seen >= 1);
 }

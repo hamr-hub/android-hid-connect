@@ -222,9 +222,7 @@ pub struct KvPair<'a> {
 
 impl std::fmt::Debug for KvPair<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KvPair")
-            .field("key", &self.key)
-            .finish()
+        f.debug_struct("KvPair").field("key", &self.key).finish()
     }
 }
 

@@ -46,8 +46,7 @@ pub fn open(path: impl AsRef<Path>) -> rusqlite::Result<(Connection, Memory)> {
     // `conn` for the migration.
     let mut mem = Memory::new();
     {
-        let mut stmt = conn
-            .prepare("SELECT screen_id, successes, failures FROM screens")?;
+        let mut stmt = conn.prepare("SELECT screen_id, successes, failures FROM screens")?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let screen_id_bytes: Vec<u8> = row.get(0)?;
@@ -118,16 +117,22 @@ mod tests {
         // Round 1: write.
         {
             let (conn, mut mem) = open(&path).expect("open");
-            mem.record_success(sid, Action::Tap {
-                x: 1,
-                y: 2,
-                deadline_ms: 1,
-            });
-            mem.record_success(sid, Action::Tap {
-                x: 3,
-                y: 4,
-                deadline_ms: 1,
-            });
+            mem.record_success(
+                sid,
+                Action::Tap {
+                    x: 1,
+                    y: 2,
+                    deadline_ms: 1,
+                },
+            );
+            mem.record_success(
+                sid,
+                Action::Tap {
+                    x: 3,
+                    y: 4,
+                    deadline_ms: 1,
+                },
+            );
             let entry = mem.peek(sid).expect("present after write");
             persist_screen(&conn, sid, entry).expect("persist");
             conn.close().ok();
@@ -160,11 +165,14 @@ mod tests {
                 format!("ph-{i}").as_bytes(),
                 &format!("com.foo/.S{i}"),
             );
-            mem.record_success(sid, Action::Tap {
-                x: i,
-                y: i,
-                deadline_ms: 1,
-            });
+            mem.record_success(
+                sid,
+                Action::Tap {
+                    x: i,
+                    y: i,
+                    deadline_ms: 1,
+                },
+            );
         }
         assert_eq!(mem.len(), 5);
         let _ = std::fs::remove_file(&path);

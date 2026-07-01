@@ -170,14 +170,8 @@ impl StateModel {
         // Real number will be set during Phase 2 benchmarking; this
         // is just an order-of-magnitude check.
         self.event_queue.len() * 256
-            + self.recent_action_results.len() * std::mem::size_of::<(
-                ActionId,
-                ActionResult,
-            )>()
-            + self.recent_plan_results.len() * std::mem::size_of::<(
-                PlanId,
-                PlanResult,
-            )>()
+            + self.recent_action_results.len() * std::mem::size_of::<(ActionId, ActionResult)>()
+            + self.recent_plan_results.len() * std::mem::size_of::<(PlanId, PlanResult)>()
     }
 }
 
@@ -255,7 +249,9 @@ mod tests {
             s.action_result(ActionId(0)).is_none(),
             "oldest dropped past cap"
         );
-        assert!(s.action_result(ActionId((ACTION_RESULT_CAP + 4) as u64)).is_some());
+        assert!(s
+            .action_result(ActionId((ACTION_RESULT_CAP + 4) as u64))
+            .is_some());
     }
 
     #[test]
@@ -300,9 +296,6 @@ mod tests {
             s.record_action_result(ActionId(i), dummy_result(i).1);
         }
         let bytes = s.approx_memory_bytes();
-        assert!(
-            bytes < 1 << 20,
-            "StateModel exceeded 1 MiB: {bytes} bytes"
-        );
+        assert!(bytes < 1 << 20, "StateModel exceeded 1 MiB: {bytes} bytes");
     }
 }

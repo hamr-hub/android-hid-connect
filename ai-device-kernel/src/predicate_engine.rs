@@ -87,13 +87,8 @@ impl PredicateEngine {
     pub fn register(&mut self, predicate: Predicate) -> PredicateHandle {
         let handle = PredicateHandle(self.next_handle);
         self.next_handle = self.next_handle.wrapping_add(1);
-        self.predicates.insert(
-            handle,
-            RegisteredPredicate {
-                handle,
-                predicate,
-            },
-        );
+        self.predicates
+            .insert(handle, RegisteredPredicate { handle, predicate });
         self.registered_count = self.registered_count.saturating_add(1);
         handle
     }
@@ -239,7 +234,11 @@ fn observation_activity_matches(obs: &Observation, component: &str) -> bool {
 /// 0.05 (i.e., "no change") within `timeout_ms` of daemon
 /// start. This is a stub for Phase 2 (the real implementation
 /// will fold durations across multiple observations).
-fn observation_has_scene_stable_event(obs: &Observation, duration_ms: u32, timeout_ms: u32) -> bool {
+fn observation_has_scene_stable_event(
+    obs: &Observation,
+    duration_ms: u32,
+    timeout_ms: u32,
+) -> bool {
     if duration_ms > timeout_ms {
         return false;
     }
@@ -259,9 +258,10 @@ fn observation_has_a11y_idle_event(obs: &Observation, duration_ms: u32, timeout_
     if duration_ms > timeout_ms {
         return false;
     }
-    obs.events.iter().any(|ev| {
-        matches!(ev, DeviceEvent::ConfigurationChanged)
-    }) || obs.a11y.as_ref().is_some_and(|a| a.node_count > 0)
+    obs.events
+        .iter()
+        .any(|ev| matches!(ev, DeviceEvent::ConfigurationChanged))
+        || obs.a11y.as_ref().is_some_and(|a| a.node_count > 0)
 }
 
 /// Stub for SelectorMatches: matches if the a11y JSON contains
@@ -275,7 +275,9 @@ fn observation_selector_matches(obs: &Observation, selector: &str) -> bool {
 /// True iff the observation contains at least one matching
 /// `EventKind`.
 fn observation_contains_event_kind(obs: &Observation, kind: EventKind) -> bool {
-    obs.events.iter().any(|ev| EventKind::from_event(ev) == Some(kind))
+    obs.events
+        .iter()
+        .any(|ev| EventKind::from_event(ev) == Some(kind))
 }
 
 #[cfg(test)]
@@ -399,9 +401,12 @@ mod tests {
             component: "p/.x".into(),
             timeout_ms: 100,
         });
-        let obs = obs_with_event(0, DeviceEvent::ActivityResumed {
-            component: "p/.x".into(),
-        });
+        let obs = obs_with_event(
+            0,
+            DeviceEvent::ActivityResumed {
+                component: "p/.x".into(),
+            },
+        );
         assert_eq!(
             engine.on_observation(&obs)[0].1,
             PredicateOutcome::NoMatch,
@@ -417,10 +422,7 @@ mod tests {
             timeout_ms: 5000,
         });
         let obs = obs_with_event(0, DeviceEvent::SceneChangeDetected { score: 0.01 });
-        assert_eq!(
-            engine.on_observation(&obs)[0].1,
-            PredicateOutcome::Matched
-        );
+        assert_eq!(engine.on_observation(&obs)[0].1, PredicateOutcome::Matched);
     }
 
     #[test]
@@ -431,10 +433,7 @@ mod tests {
             timeout_ms: 5000,
         });
         let obs = obs_with_event(0, DeviceEvent::SceneChangeDetected { score: 0.5 });
-        assert_eq!(
-            engine.on_observation(&obs)[0].1,
-            PredicateOutcome::NoMatch
-        );
+        assert_eq!(engine.on_observation(&obs)[0].1, PredicateOutcome::NoMatch);
     }
 
     #[test]
@@ -545,10 +544,7 @@ mod tests {
             component: "q".into(),
             timeout_ms: 1000,
         });
-        assert!(
-            h2.0 > h1.0,
-            "handles must keep advancing across clears"
-        );
+        assert!(h2.0 > h1.0, "handles must keep advancing across clears");
     }
 
     #[test]
@@ -587,12 +583,7 @@ mod tests {
             selector: "login".into(),
             timeout_ms: 5000,
         });
-        let obs_match = obs_with_a11y(
-            0,
-            "p/.a",
-            5,
-            "[{\"class\":\"Button\",\"id\":\"login\"}]",
-        );
+        let obs_match = obs_with_a11y(0, "p/.a", 5, "[{\"class\":\"Button\",\"id\":\"login\"}]");
         let obs_other = obs_with_a11y(0, "p/.a", 5, "[{\"id\":\"other\"}]");
         assert_eq!(
             engine.on_observation(&obs_match)[0].1,

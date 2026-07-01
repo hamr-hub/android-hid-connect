@@ -22,8 +22,8 @@
 //!   the typed surface for gamepad / canvas / WebView paths that
 //!   the typed enum can't reach (v3 P0 fix, see v3 §6.2).
 
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::ids::{ActionId, ScreenId};
 use crate::observation::{DeviceEvent, FrameSnapshot};
@@ -598,11 +598,10 @@ mod tests {
             ),
             (
                 Action::Wait {
-                    predicate:
-                        crate::predicate::Predicate::SelectorMatches {
-                            selector: "x".into(),
-                            timeout_ms: 0,
-                        },
+                    predicate: crate::predicate::Predicate::SelectorMatches {
+                        selector: "x".into(),
+                        timeout_ms: 0,
+                    },
                     deadline_ms: 3000,
                 },
                 3000,
@@ -699,8 +698,7 @@ mod tests {
             }
             .kind_label(),
         ];
-        let unique: std::collections::HashSet<_> =
-            labels.iter().copied().collect();
+        let unique: std::collections::HashSet<_> = labels.iter().copied().collect();
         assert_eq!(unique.len(), labels.len(), "duplicate kind labels");
     }
 
@@ -770,7 +768,11 @@ mod tests {
         ];
         for action in &actions {
             let caps = action.capabilities();
-            assert!(!caps.is_empty(), "no capabilities for {}", action.kind_label());
+            assert!(
+                !caps.is_empty(),
+                "no capabilities for {}",
+                action.kind_label()
+            );
             // Second call returns the same set (order-preserving).
             let caps2 = action.capabilities();
             assert_eq!(caps, caps2, "non-deterministic capabilities");
@@ -827,7 +829,10 @@ mod tests {
             elapsed_ms: 1,
             ..Default::default()
         };
-        assert!(!ar.has_ground_truth(), "landed=false → no ground truth flag");
+        assert!(
+            !ar.has_ground_truth(),
+            "landed=false → no ground truth flag"
+        );
         ar.landed = true;
         assert!(ar.has_ground_truth(), "landed=true + non-empty diff → true");
     }
@@ -839,8 +844,7 @@ mod tests {
             deadline_ms: 1500,
         };
         let bytes = postcard::to_allocvec(&action).expect("encode action");
-        let decoded: Action =
-            postcard::from_bytes(&bytes).expect("decode action");
+        let decoded: Action = postcard::from_bytes(&bytes).expect("decode action");
         assert_eq!(decoded, action);
     }
 
@@ -860,8 +864,7 @@ mod tests {
             ..Default::default()
         };
         let bytes = postcard::to_allocvec(&result).expect("encode");
-        let decoded: ActionResult =
-            postcard::from_bytes(&bytes).expect("decode");
+        let decoded: ActionResult = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(decoded, result);
     }
 
@@ -923,8 +926,7 @@ mod tests {
             source: src,
         };
         let bytes = postcard::to_allocvec(&diff).expect("encode");
-        let decoded: FrameDiff =
-            postcard::from_bytes(&bytes).expect("decode");
+        let decoded: FrameDiff = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(decoded, diff);
     }
 

@@ -135,10 +135,7 @@ fn print_report(samples: &mut [Duration], iterations: u64, plan_len: usize) {
         p99.as_micros() as f64,
         max.as_micros() as f64,
     );
-    println!(
-        "total wall      : {:.2} ms",
-        total.as_secs_f64() * 1000.0
-    );
+    println!("total wall      : {:.2} ms", total.as_secs_f64() * 1000.0);
 
     // SLO gate: p99 < 5 ms. Emit non-zero exit on regression so
     // CI catches it.

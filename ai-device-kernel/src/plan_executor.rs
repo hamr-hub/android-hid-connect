@@ -69,10 +69,7 @@ pub enum PlanFailure {
     },
     /// Predicate aborted by an explicit cancel (unused at the
     /// executor level but propagated for completeness).
-    Cancelled {
-        step_index: u32,
-        step_id: StepId,
-    },
+    Cancelled { step_index: u32, step_id: StepId },
 }
 
 impl PlanFailure {
@@ -122,7 +119,10 @@ pub struct ExecutorCounters {
 /// `Err(PlanFailure)` along with the **partial** steps so
 /// the host can decide whether to surface this as a
 /// `PlanResult.all_landed = false` or to discard.
-#[allow(clippy::too_many_arguments, reason = "executor signature is intentional")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "executor signature is intentional"
+)]
 pub fn execute<A, D>(
     plan: &Plan,
     predicate_engine: &mut PredicateEngine,
@@ -339,11 +339,9 @@ fn wait_for_predicate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{
-        Action, A11yNodeChangeKind, A11yNodeDiff, LaunchBy, ObservationComponent,
-    };
-    use crate::plan::PlanStep;
+    use crate::action::{A11yNodeChangeKind, A11yNodeDiff, Action, LaunchBy, ObservationComponent};
     use crate::observation::A11yTree;
+    use crate::plan::PlanStep;
 
     fn idle_obs(seq: u64) -> Observation {
         Observation {

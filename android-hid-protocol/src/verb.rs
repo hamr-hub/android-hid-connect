@@ -447,10 +447,7 @@ mod tests {
             Verb::parse("not_a_verb"),
             Err(VerbParseError("not_a_verb".to_owned()))
         );
-        assert_eq!(
-            Verb::parse(""),
-            Err(VerbParseError(String::new()))
-        );
+        assert_eq!(Verb::parse(""), Err(VerbParseError(String::new())));
     }
 
     #[test]

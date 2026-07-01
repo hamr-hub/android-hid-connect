@@ -19,9 +19,9 @@ use std::io::Read;
 use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
 
+use android_hid_connect::control::message::{ControlMessage, InjectText};
 use android_hid_connect::session::{GamepadFrameRaw, HidSession, OpenRequest};
 use android_hid_connect::transport::{open_tcp, send_one};
-use android_hid_connect::control::message::{ControlMessage, InjectText};
 use android_hid_connect::types::{
     AndroidKeyAction, AndroidKeycode, ClipboardCopyKey, GamepadAxis, GamepadButton, Modifiers,
     Scancode, TouchAction, TouchPointerId,
@@ -93,9 +93,20 @@ fn screencap(path: &str) -> std::io::Result<()> {
 /// `cat!` is a one-line intent inserter. The trailing expression on
 /// each `cat!` line is the closure body that runs against the live
 /// session; it must evaluate to `Result<(), E>` for some `E: Into<Box<dyn Error>>`.
-fn ic(bucket: &'static str, method: &'static str, capture: bool, mark: bool,
-       run: RunFn) -> IntentCall {
-    IntentCall { bucket, method, run, capture, mark }
+fn ic(
+    bucket: &'static str,
+    method: &'static str,
+    capture: bool,
+    mark: bool,
+    run: RunFn,
+) -> IntentCall {
+    IntentCall {
+        bucket,
+        method,
+        run,
+        capture,
+        mark,
+    }
 }
 
 macro_rules! cat {
@@ -108,109 +119,371 @@ fn catalogue() -> Vec<IntentCall> {
     let mut v: Vec<IntentCall> = Vec::with_capacity(96);
 
     // ---------- Bucket 1: keyboard raw ----------
-    cat!(v, "keyboard", "type_text",          true, false, |s| s.type_text("e2e test").map_err(Into::into));
-    cat!(v, "keyboard", "type_text_strict",   true, false, |s| s.type_text_strict("ok").map_err(Into::into));
-    cat!(v, "keyboard", "key(down)",         false, false, |s| s.key(Scancode::A as u8, true,  Modifiers::empty()).map_err(Into::into));
-    cat!(v, "keyboard", "key(up)",           false, false, |s| s.key(Scancode::A as u8, false, Modifiers::empty()).map_err(Into::into));
+    cat!(v, "keyboard", "type_text", true, false, |s| s
+        .type_text("e2e test")
+        .map_err(Into::into));
+    cat!(v, "keyboard", "type_text_strict", true, false, |s| s
+        .type_text_strict("ok")
+        .map_err(Into::into));
+    cat!(v, "keyboard", "key(down)", false, false, |s| s
+        .key(Scancode::A as u8, true, Modifiers::empty())
+        .map_err(Into::into));
+    cat!(v, "keyboard", "key(up)", false, false, |s| s
+        .key(Scancode::A as u8, false, Modifiers::empty())
+        .map_err(Into::into));
 
     // ---------- Bucket 2: touch ----------
-    cat!(v, "touch", "tap",                   true, false, |s| s.tap(540, 1200).map_err(Into::into));
-    cat!(v, "touch", "tap_pointer",          false, false, |s| s.tap_pointer(TouchPointerId::finger(1), 540, 1200).map_err(Into::into));
-    cat!(v, "touch", "swipe",                 true, false, |s| s.swipe((540,1400),(540,1000), Duration::from_millis(200), 6).map_err(Into::into));
-    cat!(v, "touch", "swipe_pointer",        false, false, |s| s.swipe_pointer(TouchPointerId::finger(2),(540,1400),(540,1000), Duration::from_millis(200), 6).map_err(Into::into));
-    cat!(v, "touch", "double_tap",           true, false, |s| s.double_tap(540, 1200).map_err(Into::into));
-    cat!(v, "touch", "long_press",           true, false, |s| s.long_press(540, 1200, Duration::from_millis(150)).map_err(Into::into));
-    cat!(v, "touch", "three_finger_screenshot", true, true, |s| s.three_finger_screenshot().map_err(Into::into));
-    cat!(v, "touch", "inject_touch",         false, false, |s| s.inject_touch(0, 7, 200, 200, 1.0).map_err(Into::into));
-    cat!(v, "touch", "inject_touch_action",  false, false, |s| s.inject_touch_action(TouchAction::DOWN, 7, 200, 200, 1.0).map_err(Into::into));
-    cat!(v, "touch", "inject_touch_pointer", false, false, |s| s.inject_touch_pointer(TouchAction::UP, TouchPointerId::finger(7), 200, 200, 0.0).map_err(Into::into));
-    cat!(v, "touch", "cancel_touch",         false, false, |s| s.cancel_touch(7).map_err(Into::into));
-    cat!(v, "touch", "cancel_touch_pointer", false, false, |s| s.cancel_touch_pointer(TouchPointerId::finger(7)).map_err(Into::into));
+    cat!(v, "touch", "tap", true, false, |s| s
+        .tap(540, 1200)
+        .map_err(Into::into));
+    cat!(v, "touch", "tap_pointer", false, false, |s| s
+        .tap_pointer(TouchPointerId::finger(1), 540, 1200)
+        .map_err(Into::into));
+    cat!(v, "touch", "swipe", true, false, |s| s
+        .swipe((540, 1400), (540, 1000), Duration::from_millis(200), 6)
+        .map_err(Into::into));
+    cat!(v, "touch", "swipe_pointer", false, false, |s| s
+        .swipe_pointer(
+            TouchPointerId::finger(2),
+            (540, 1400),
+            (540, 1000),
+            Duration::from_millis(200),
+            6
+        )
+        .map_err(Into::into));
+    cat!(v, "touch", "double_tap", true, false, |s| s
+        .double_tap(540, 1200)
+        .map_err(Into::into));
+    cat!(v, "touch", "long_press", true, false, |s| s
+        .long_press(540, 1200, Duration::from_millis(150))
+        .map_err(Into::into));
+    cat!(v, "touch", "three_finger_screenshot", true, true, |s| s
+        .three_finger_screenshot()
+        .map_err(Into::into));
+    cat!(v, "touch", "inject_touch", false, false, |s| s
+        .inject_touch(0, 7, 200, 200, 1.0)
+        .map_err(Into::into));
+    cat!(v, "touch", "inject_touch_action", false, false, |s| s
+        .inject_touch_action(TouchAction::DOWN, 7, 200, 200, 1.0)
+        .map_err(Into::into));
+    cat!(v, "touch", "inject_touch_pointer", false, false, |s| s
+        .inject_touch_pointer(TouchAction::UP, TouchPointerId::finger(7), 200, 200, 0.0)
+        .map_err(Into::into));
+    cat!(v, "touch", "cancel_touch", false, false, |s| s
+        .cancel_touch(7)
+        .map_err(Into::into));
+    cat!(v, "touch", "cancel_touch_pointer", false, false, |s| s
+        .cancel_touch_pointer(TouchPointerId::finger(7))
+        .map_err(Into::into));
     // multitouch handle: each test runs through a fresh handle so the
     // down+move+up lifecycle has to live inside one closure.
-    cat!(v, "touch", "multitouch.down",      false, false, |s| { let mut h=s.multitouch(); h.down(0, 540, 800, 1.0).map_err(Into::into) });
-    cat!(v, "touch", "multitouch.move_to",   false, false, |s| { let mut h=s.multitouch(); h.down(1, 540, 800, 1.0)?; h.move_to(1, 560, 820, 1.0).map_err(Into::into) });
-    cat!(v, "touch", "multitouch.up",        false, false, |s| { let mut h=s.multitouch(); h.down(2, 540, 800, 1.0)?; h.up(2).map_err(Into::into) });
-    cat!(v, "touch", "multitouch.cancel",    false, false, |s| { let mut h=s.multitouch(); h.down(3, 540, 800, 1.0)?; h.cancel(3).map_err(Into::into) });
-    cat!(v, "touch", "multitouch.release_all", false, false, |s| s.multitouch().release_all().map_err(Into::into));
-    cat!(v, "touch", "multitouch.pinch",     false, false, |s| { let mut h=s.multitouch(); h.down(4, 200, 600, 1.0)?; h.down(5, 800, 600, 1.0)?; h.pinch((4,200,600,400,600),(5,800,600,1000,600),6)?; h.up(4)?; h.up(5).map_err(Into::into) });
+    cat!(v, "touch", "multitouch.down", false, false, |s| {
+        let mut h = s.multitouch();
+        h.down(0, 540, 800, 1.0).map_err(Into::into)
+    });
+    cat!(v, "touch", "multitouch.move_to", false, false, |s| {
+        let mut h = s.multitouch();
+        h.down(1, 540, 800, 1.0)?;
+        h.move_to(1, 560, 820, 1.0).map_err(Into::into)
+    });
+    cat!(v, "touch", "multitouch.up", false, false, |s| {
+        let mut h = s.multitouch();
+        h.down(2, 540, 800, 1.0)?;
+        h.up(2).map_err(Into::into)
+    });
+    cat!(v, "touch", "multitouch.cancel", false, false, |s| {
+        let mut h = s.multitouch();
+        h.down(3, 540, 800, 1.0)?;
+        h.cancel(3).map_err(Into::into)
+    });
+    cat!(v, "touch", "multitouch.release_all", false, false, |s| s
+        .multitouch()
+        .release_all()
+        .map_err(Into::into));
+    cat!(v, "touch", "multitouch.pinch", false, false, |s| {
+        let mut h = s.multitouch();
+        h.down(4, 200, 600, 1.0)?;
+        h.down(5, 800, 600, 1.0)?;
+        h.pinch((4, 200, 600, 400, 600), (5, 800, 600, 1000, 600), 6)?;
+        h.up(4)?;
+        h.up(5).map_err(Into::into)
+    });
 
     // ---------- Bucket 3: scroll ----------
-    cat!(v, "scroll", "scroll",           true, false, |s| s.scroll(540, 1200, 0.0, -2.0).map_err(Into::into));
-    cat!(v, "scroll", "inject_scroll",   false, false, |s| s.inject_scroll(540, 1200, 0.0, -2.0, 0).map_err(Into::into));
+    cat!(v, "scroll", "scroll", true, false, |s| s
+        .scroll(540, 1200, 0.0, -2.0)
+        .map_err(Into::into));
+    cat!(v, "scroll", "inject_scroll", false, false, |s| s
+        .inject_scroll(540, 1200, 0.0, -2.0, 0)
+        .map_err(Into::into));
 
     // ---------- Bucket 4: panels ----------
-    cat!(v, "panel",  "show_notifications", true, false, |s| s.show_notifications().map_err(Into::into));
-    cat!(v, "panel",  "collapse_panels",    true, false, |s| s.collapse_panels().map_err(Into::into));
-    cat!(v, "panel",  "show_quick_settings",true, false, |s| s.show_quick_settings().map_err(Into::into));
-    cat!(v, "panel",  "collapse_panels(2)", true, false, |s| s.collapse_panels().map_err(Into::into));
+    cat!(v, "panel", "show_notifications", true, false, |s| s
+        .show_notifications()
+        .map_err(Into::into));
+    cat!(v, "panel", "collapse_panels", true, false, |s| s
+        .collapse_panels()
+        .map_err(Into::into));
+    cat!(v, "panel", "show_quick_settings", true, false, |s| s
+        .show_quick_settings()
+        .map_err(Into::into));
+    cat!(v, "panel", "collapse_panels(2)", true, false, |s| s
+        .collapse_panels()
+        .map_err(Into::into));
 
     // ---------- Bucket 5: media / system keys ----------
-    cat!(v, "media_key", "press_home",        true, false, |s| s.press_home().map_err(Into::into));
-    cat!(v, "media_key", "press_back",        true, false, |s| s.press_back().map_err(Into::into));
-    cat!(v, "media_key", "open_recents",      true, false, |s| s.open_recents().map_err(Into::into));
-    cat!(v, "media_key", "volume_up",         true, false, |s| s.volume_up().map_err(Into::into));
-    cat!(v, "media_key", "volume_down",       true, false, |s| s.volume_down().map_err(Into::into));
-    cat!(v, "media_key", "volume_mute",       false, false, |s| s.volume_mute().map_err(Into::into));
-    cat!(v, "media_key", "back_or_screen_on", false, false, |s| s.back_or_screen_on(AndroidKeyAction::DOWN).map_err(Into::into));
-    cat!(v, "media_key", "tap_android_key",   false, false, |s| s.tap_android_key(AndroidKeycode::ENTER).map_err(Into::into));
-    cat!(v, "media_key", "tap_android_key_with_metastate", false, false, |s| s.tap_android_key_with_metastate(AndroidKeycode::ENTER, 0x1000).map_err(Into::into));
-    cat!(v, "media_key", "tap_android_keycode", false, false, |s| s.tap_android_keycode(AndroidKeycode::DPAD_RIGHT.value(), 0).map_err(Into::into));
-    cat!(v, "media_key", "press_android_key", false, false, |s| s.press_android_key(AndroidKeycode::DPAD_LEFT).map_err(Into::into));
-    cat!(v, "media_key", "release_android_key", false, false, |s| s.release_android_key(AndroidKeycode::DPAD_LEFT).map_err(Into::into));
-    cat!(v, "media_key", "inject_android_keycode", false, false, |s| s.inject_android_keycode(AndroidKeyAction::DOWN.value(), AndroidKeycode::DPAD_UP, 0, 0).map_err(Into::into));
-    cat!(v, "media_key", "inject_android_key_event", false, false, |s| s.inject_android_key_event(AndroidKeyAction::UP, AndroidKeycode::DPAD_UP, 0, 0).map_err(Into::into));
-    cat!(v, "media_key", "inject_keycode",    false, false, |s| s.inject_keycode(AndroidKeyAction::DOWN.value(), AndroidKeycode::DPAD_DOWN.value(), 0, 0).map_err(Into::into));
+    cat!(v, "media_key", "press_home", true, false, |s| s
+        .press_home()
+        .map_err(Into::into));
+    cat!(v, "media_key", "press_back", true, false, |s| s
+        .press_back()
+        .map_err(Into::into));
+    cat!(v, "media_key", "open_recents", true, false, |s| s
+        .open_recents()
+        .map_err(Into::into));
+    cat!(v, "media_key", "volume_up", true, false, |s| s
+        .volume_up()
+        .map_err(Into::into));
+    cat!(v, "media_key", "volume_down", true, false, |s| s
+        .volume_down()
+        .map_err(Into::into));
+    cat!(v, "media_key", "volume_mute", false, false, |s| s
+        .volume_mute()
+        .map_err(Into::into));
+    cat!(v, "media_key", "back_or_screen_on", false, false, |s| s
+        .back_or_screen_on(AndroidKeyAction::DOWN)
+        .map_err(Into::into));
+    cat!(v, "media_key", "tap_android_key", false, false, |s| s
+        .tap_android_key(AndroidKeycode::ENTER)
+        .map_err(Into::into));
+    cat!(
+        v,
+        "media_key",
+        "tap_android_key_with_metastate",
+        false,
+        false,
+        |s| s
+            .tap_android_key_with_metastate(AndroidKeycode::ENTER, 0x1000)
+            .map_err(Into::into)
+    );
+    cat!(v, "media_key", "tap_android_keycode", false, false, |s| s
+        .tap_android_keycode(AndroidKeycode::DPAD_RIGHT.value(), 0)
+        .map_err(Into::into));
+    cat!(v, "media_key", "press_android_key", false, false, |s| s
+        .press_android_key(AndroidKeycode::DPAD_LEFT)
+        .map_err(Into::into));
+    cat!(v, "media_key", "release_android_key", false, false, |s| s
+        .release_android_key(AndroidKeycode::DPAD_LEFT)
+        .map_err(Into::into));
+    cat!(
+        v,
+        "media_key",
+        "inject_android_keycode",
+        false,
+        false,
+        |s| s
+            .inject_android_keycode(
+                AndroidKeyAction::DOWN.value(),
+                AndroidKeycode::DPAD_UP,
+                0,
+                0
+            )
+            .map_err(Into::into)
+    );
+    cat!(
+        v,
+        "media_key",
+        "inject_android_key_event",
+        false,
+        false,
+        |s| s
+            .inject_android_key_event(AndroidKeyAction::UP, AndroidKeycode::DPAD_UP, 0, 0)
+            .map_err(Into::into)
+    );
+    cat!(v, "media_key", "inject_keycode", false, false, |s| s
+        .inject_keycode(
+            AndroidKeyAction::DOWN.value(),
+            AndroidKeycode::DPAD_DOWN.value(),
+            0,
+            0
+        )
+        .map_err(Into::into));
 
     // ---------- Bucket 6: system / display / camera / ai ----------
-    cat!(v, "system", "set_screen_power(true)",  true, false, |s| s.set_screen_power(true).map_err(Into::into));
-    cat!(v, "system", "set_screen_power(false)", false, false, |s| s.set_screen_power(false).map_err(Into::into));
-    cat!(v, "system", "set_screen_power(true)",  true, false, |s| s.set_screen_power(true).map_err(Into::into));
-    cat!(v, "system", "rotate_device",           true, false, |s| s.rotate_device().map_err(Into::into));
-    cat!(v, "system", "resize_display",         false, false, |s| s.resize_display(1080, 2400).map_err(Into::into));
-    cat!(v, "system", "set_torch(false)",       false, false, |s| s.set_torch(false).map_err(Into::into));
-    cat!(v, "system", "camera_zoom_in",         false, false, |s| s.camera_zoom_in().map_err(Into::into));
-    cat!(v, "system", "camera_zoom_out",        false, false, |s| s.camera_zoom_out().map_err(Into::into));
-    cat!(v, "system", "open_hard_keyboard_settings", false, false, |s| s.open_hard_keyboard_settings().map_err(Into::into));
-    cat!(v, "system", "reset_video",            false, false, |s| s.reset_video().map_err(Into::into));
-    cat!(v, "system", "configure_ai",           false, false, |s| s.configure_ai(0x0F, 250, 128).map_err(Into::into));
-    cat!(v, "system", "query_ai",               false, false, |s| s.query_ai(0).map_err(Into::into));
-    cat!(v, "system", "pause_ai",               false, false, |s| s.pause_ai().map_err(Into::into));
+    cat!(v, "system", "set_screen_power(true)", true, false, |s| s
+        .set_screen_power(true)
+        .map_err(Into::into));
+    cat!(v, "system", "set_screen_power(false)", false, false, |s| s
+        .set_screen_power(false)
+        .map_err(Into::into));
+    cat!(v, "system", "set_screen_power(true)", true, false, |s| s
+        .set_screen_power(true)
+        .map_err(Into::into));
+    cat!(v, "system", "rotate_device", true, false, |s| s
+        .rotate_device()
+        .map_err(Into::into));
+    cat!(v, "system", "resize_display", false, false, |s| s
+        .resize_display(1080, 2400)
+        .map_err(Into::into));
+    cat!(v, "system", "set_torch(false)", false, false, |s| s
+        .set_torch(false)
+        .map_err(Into::into));
+    cat!(v, "system", "camera_zoom_in", false, false, |s| s
+        .camera_zoom_in()
+        .map_err(Into::into));
+    cat!(v, "system", "camera_zoom_out", false, false, |s| s
+        .camera_zoom_out()
+        .map_err(Into::into));
+    cat!(
+        v,
+        "system",
+        "open_hard_keyboard_settings",
+        false,
+        false,
+        |s| s.open_hard_keyboard_settings().map_err(Into::into)
+    );
+    cat!(v, "system", "reset_video", false, false, |s| s
+        .reset_video()
+        .map_err(Into::into));
+    cat!(v, "system", "configure_ai", false, false, |s| s
+        .configure_ai(0x0F, 250, 128)
+        .map_err(Into::into));
+    cat!(v, "system", "query_ai", false, false, |s| s
+        .query_ai(0)
+        .map_err(Into::into));
+    cat!(v, "system", "pause_ai", false, false, |s| s
+        .pause_ai()
+        .map_err(Into::into));
 
     // ---------- Bucket 7: app_launch ----------
-    cat!(v, "app_launch", "launch_app(settings)", true, false, |s| s.launch_app("com.android.settings").map_err(Into::into));
-    cat!(v, "app_launch", "press_home",          true, false, |s| s.press_home().map_err(Into::into));
+    cat!(v, "app_launch", "launch_app(settings)", true, false, |s| s
+        .launch_app("com.android.settings")
+        .map_err(Into::into));
+    cat!(v, "app_launch", "press_home", true, false, |s| s
+        .press_home()
+        .map_err(Into::into));
 
     // ---------- Bucket 8: clipboard ----------
-    cat!(v, "clipboard", "set_clipboard",        true, false, |s| s.set_clipboard("e2e marker", false).map_err(Into::into));
-    cat!(v, "clipboard", "get_clipboard",       false, false, |s| s.get_clipboard().map_err(Into::into));
-    cat!(v, "clipboard", "request_clipboard",   false, false, |s| s.request_clipboard(1).map_err(Into::into));
-    cat!(v, "clipboard", "request_clipboard_key", false, false, |s| s.request_clipboard_key(ClipboardCopyKey::COPY).map_err(Into::into));
+    cat!(v, "clipboard", "set_clipboard", true, false, |s| s
+        .set_clipboard("e2e marker", false)
+        .map_err(Into::into));
+    cat!(v, "clipboard", "get_clipboard", false, false, |s| s
+        .get_clipboard()
+        .map_err(Into::into));
+    cat!(v, "clipboard", "request_clipboard", false, false, |s| s
+        .request_clipboard(1)
+        .map_err(Into::into));
+    cat!(v, "clipboard", "request_clipboard_key", false, false, |s| s
+        .request_clipboard_key(ClipboardCopyKey::COPY)
+        .map_err(Into::into));
 
     // ---------- Bucket 9: gamepad raw ----------
-    cat!(v, "gamepad", "set_stick(LX,0.5)",          false, false, |s| s.set_stick(GamepadAxis::LeftX, 0.5).map_err(Into::into));
-    cat!(v, "gamepad", "set_stick_raw(LX,16384)",    false, false, |s| s.set_stick_raw(GamepadAxis::LeftX, 16384).map_err(Into::into));
-    cat!(v, "gamepad", "set_buttons(South)",         false, false, |s| s.set_buttons(GamepadButton::South as u32).map_err(Into::into));
-    cat!(v, "gamepad", "set_button(South,down)",     false, false, |s| s.set_button(GamepadButton::South, true).map_err(Into::into));
-    cat!(v, "gamepad", "set_button(South,up)",       false, false, |s| s.set_button(GamepadButton::South, false).map_err(Into::into));
-    cat!(v, "gamepad", "set_frame_raw",              false, false, |s| s.set_frame_raw(0, 1000, -1000, 2000, -2000, 1000, 0).map_err(Into::into));
-    cat!(v, "gamepad", "set_frame_raw_unchecked",    false, false, |s| s.set_frame_raw_unchecked(0, -2000, 2000, -3000, 3000, 0, 1500).map_err(Into::into));
-    cat!(v, "gamepad", "set_frame_raw_unchecked_frame", false, false, |s| s.set_frame_raw_unchecked_frame(GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0)).map_err(Into::into));
-    cat!(v, "gamepad", "set_frame_raw_packed",       false, false, |s| s.set_frame_raw_packed(&[0u8; 15]).map_err(Into::into));
-    cat!(v, "gamepad", "set_left_stick_raw",         false, false, |s| s.set_left_stick_raw(100, -100).map_err(Into::into));
-    cat!(v, "gamepad", "set_right_stick_raw",        false, false, |s| s.set_right_stick_raw(-200, 200).map_err(Into::into));
-    cat!(v, "gamepad", "set_triggers_raw",           false, false, |s| s.set_triggers_raw(500, 700).map_err(Into::into));
-    cat!(v, "gamepad", "set_sticks_raw",             false, false, |s| s.set_sticks_raw(0, 0, 0, 0, 0, 0).map_err(Into::into));
-    cat!(v, "gamepad", "set_frame_raw_batch",        false, false, |s| { let _ = s.set_frame_raw_batch(&[GamepadFrameRaw::new(0,0,0,0,0,0,0), GamepadFrameRaw::new(GamepadButton::South as u32,100,0,0,0,0,0), GamepadFrameRaw::new(0,0,0,0,0,0,0)])?; Ok(()) });
-    cat!(v, "gamepad", "set_frame_raw_batch_unchecked", false, false, |s| { let _ = s.set_frame_raw_batch_unchecked(&[GamepadFrameRaw::new(0,0,0,0,0,0,0)])?; Ok(()) });
-    cat!(v, "gamepad", "set_frame_raw_packed_batch",    false, false, |s| { let _ = s.set_frame_raw_packed_batch(&[[0u8;15],[0u8;15]])?; Ok(()) });
-    cat!(v, "gamepad", "batched set_stick_raw x32",  false, false, |s| { for i in 0i16..32 { s.set_stick_raw(GamepadAxis::LeftX, i * 32)?; } Ok(()) });
+    cat!(v, "gamepad", "set_stick(LX,0.5)", false, false, |s| s
+        .set_stick(GamepadAxis::LeftX, 0.5)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_stick_raw(LX,16384)", false, false, |s| s
+        .set_stick_raw(GamepadAxis::LeftX, 16384)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_buttons(South)", false, false, |s| s
+        .set_buttons(GamepadButton::South as u32)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_button(South,down)", false, false, |s| s
+        .set_button(GamepadButton::South, true)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_button(South,up)", false, false, |s| s
+        .set_button(GamepadButton::South, false)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_frame_raw", false, false, |s| s
+        .set_frame_raw(0, 1000, -1000, 2000, -2000, 1000, 0)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_frame_raw_unchecked", false, false, |s| s
+        .set_frame_raw_unchecked(0, -2000, 2000, -3000, 3000, 0, 1500)
+        .map_err(Into::into));
+    cat!(
+        v,
+        "gamepad",
+        "set_frame_raw_unchecked_frame",
+        false,
+        false,
+        |s| s
+            .set_frame_raw_unchecked_frame(GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0))
+            .map_err(Into::into)
+    );
+    cat!(v, "gamepad", "set_frame_raw_packed", false, false, |s| s
+        .set_frame_raw_packed(&[0u8; 15])
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_left_stick_raw", false, false, |s| s
+        .set_left_stick_raw(100, -100)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_right_stick_raw", false, false, |s| s
+        .set_right_stick_raw(-200, 200)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_triggers_raw", false, false, |s| s
+        .set_triggers_raw(500, 700)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_sticks_raw", false, false, |s| s
+        .set_sticks_raw(0, 0, 0, 0, 0, 0)
+        .map_err(Into::into));
+    cat!(v, "gamepad", "set_frame_raw_batch", false, false, |s| {
+        let _ = s.set_frame_raw_batch(&[
+            GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0),
+            GamepadFrameRaw::new(GamepadButton::South as u32, 100, 0, 0, 0, 0, 0),
+            GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0),
+        ])?;
+        Ok(())
+    });
+    cat!(
+        v,
+        "gamepad",
+        "set_frame_raw_batch_unchecked",
+        false,
+        false,
+        |s| {
+            let _ =
+                s.set_frame_raw_batch_unchecked(&[GamepadFrameRaw::new(0, 0, 0, 0, 0, 0, 0)])?;
+            Ok(())
+        }
+    );
+    cat!(
+        v,
+        "gamepad",
+        "set_frame_raw_packed_batch",
+        false,
+        false,
+        |s| {
+            let _ = s.set_frame_raw_packed_batch(&[[0u8; 15], [0u8; 15]])?;
+            Ok(())
+        }
+    );
+    cat!(
+        v,
+        "gamepad",
+        "batched set_stick_raw x32",
+        false,
+        false,
+        |s| {
+            for i in 0i16..32 {
+                s.set_stick_raw(GamepadAxis::LeftX, i * 32)?;
+            }
+            Ok(())
+        }
+    );
 
     // ---------- Bucket 10: mouse UHID ----------
-    cat!(v, "mouse", "mouse_motion",      false, false, |s| s.mouse_motion(5, 5, 0).map_err(Into::into));
-    cat!(v, "mouse", "mouse_buttons",     false, false, |s| s.mouse_buttons(0).map_err(Into::into));
-    cat!(v, "mouse", "mouse_scroll",      false, false, |s| s.mouse_scroll(0.0, -1.0).map(|_| ()).map_err(Into::into));
-    cat!(v, "mouse", "mouse_frame_batch", false, false, |s| { let _ = s.mouse_frame_batch(&[(1,1,0),(2,-1,0)])?; Ok(()) });
+    cat!(v, "mouse", "mouse_motion", false, false, |s| s
+        .mouse_motion(5, 5, 0)
+        .map_err(Into::into));
+    cat!(v, "mouse", "mouse_buttons", false, false, |s| s
+        .mouse_buttons(0)
+        .map_err(Into::into));
+    cat!(v, "mouse", "mouse_scroll", false, false, |s| s
+        .mouse_scroll(0.0, -1.0)
+        .map(|_| ())
+        .map_err(Into::into));
+    cat!(v, "mouse", "mouse_frame_batch", false, false, |s| {
+        let _ = s.mouse_frame_batch(&[(1, 1, 0), (2, -1, 0)])?;
+        Ok(())
+    });
 
     v
 }
@@ -222,7 +495,10 @@ fn run_sweep() -> Result<()> {
     // not the class name; `ps -ef | grep ...` is the reliable check.
     // (Avoid `pgrep -f`, which matches the substring in its own argv.)
     let pid_check = Command::new("adb")
-        .args(["shell", "ps -ef | grep com.genymobile.scrcpy.Server | grep -v grep || true"])
+        .args([
+            "shell",
+            "ps -ef | grep com.genymobile.scrcpy.Server | grep -v grep || true",
+        ])
         .output()?;
     if pid_check.stdout.is_empty() {
         eprintln!("scrcpy-server is not running on device. Restart it with the documented CLASSPATH/app_process invocation.");
@@ -257,7 +533,9 @@ fn run_sweep() -> Result<()> {
         if c.bucket != last_bucket.as_str() {
             println!("\n[{}] bucket: {}", i, c.bucket);
             last_bucket = c.bucket.to_string();
-            bucket_stats.entry(c.bucket.to_string()).or_insert((0, 0, 0));
+            bucket_stats
+                .entry(c.bucket.to_string())
+                .or_insert((0, 0, 0));
         }
         let t0 = Instant::now();
         let res = (c.run)(&mut s).and_then(|_| s.flush_now().map(|_| ()).map_err(|e| e.into()));
@@ -273,12 +551,17 @@ fn run_sweep() -> Result<()> {
         } else {
             None
         };
-        let shot_ok = !c.capture || shot_path.as_ref().is_some_and(|p| std::path::Path::new(p).exists());
+        let shot_ok = !c.capture
+            || shot_path
+                .as_ref()
+                .is_some_and(|p| std::path::Path::new(p).exists());
 
         let (result, err_str) = match res {
             Ok(()) => {
                 grand_pass += 1;
-                let st = bucket_stats.entry(c.bucket.to_string()).or_insert((0, 0, 0));
+                let st = bucket_stats
+                    .entry(c.bucket.to_string())
+                    .or_insert((0, 0, 0));
                 st.0 += 1;
                 ("pass".to_string(), None)
             }
@@ -299,12 +582,16 @@ fn run_sweep() -> Result<()> {
                     || lc.contains("camera");
                 if skipped {
                     grand_skip += 1;
-                    let st = bucket_stats.entry(c.bucket.to_string()).or_insert((0, 0, 0));
+                    let st = bucket_stats
+                        .entry(c.bucket.to_string())
+                        .or_insert((0, 0, 0));
                     st.2 += 1;
                     ("skipped".to_string(), Some(msg))
                 } else {
                     grand_fail += 1;
-                    let st = bucket_stats.entry(c.bucket.to_string()).or_insert((0, 0, 0));
+                    let st = bucket_stats
+                        .entry(c.bucket.to_string())
+                        .or_insert((0, 0, 0));
                     st.1 += 1;
                     ("fail".to_string(), Some(msg))
                 }
@@ -433,15 +720,36 @@ fn run_dispatch(args: &[String]) -> Result<()> {
     let ss = |idx: usize, def: &'static str| -> String {
         rest.get(idx).cloned().unwrap_or_else(|| def.to_string())
     };
-    let b = |idx: usize, def: bool| rest.get(idx).map(|x| x == "true" || x == "1").unwrap_or(def);
+    let b = |idx: usize, def: bool| {
+        rest.get(idx)
+            .map(|x| x == "true" || x == "1")
+            .unwrap_or(def)
+    };
 
     let r: Result<Json> = (|| -> Result<Json> {
         let ok = || Ok(Json::bool(true));
         match name {
-            "tap" => { s.tap(i(0,540), i(1,1200))?; ok() }
-            "double_tap" => { s.double_tap(i(0,540), i(1,1200))?; ok() }
-            "long_press" => { s.long_press(i(0,540), i(1,1200), Duration::from_millis(u64_a(2,150)))?; ok() }
-            "swipe" => { s.swipe((i(0,540),i(1,1500)),(i(2,540),i(3,800)), Duration::from_millis(u64_a(4,250)), u(5,6))?; ok() }
+            "tap" => {
+                s.tap(i(0, 540), i(1, 1200))?;
+                ok()
+            }
+            "double_tap" => {
+                s.double_tap(i(0, 540), i(1, 1200))?;
+                ok()
+            }
+            "long_press" => {
+                s.long_press(i(0, 540), i(1, 1200), Duration::from_millis(u64_a(2, 150)))?;
+                ok()
+            }
+            "swipe" => {
+                s.swipe(
+                    (i(0, 540), i(1, 1500)),
+                    (i(2, 540), i(3, 800)),
+                    Duration::from_millis(u64_a(4, 250)),
+                    u(5, 6),
+                )?;
+                ok()
+            }
             // INJECT_TEXT is non-UHID; bypass the (possibly broken) UHID keyboard path.
             "type_text" => {
                 let mut direct = open_tcp("127.0.0.1", PORT)?;
@@ -449,56 +757,128 @@ fn run_dispatch(args: &[String]) -> Result<()> {
                 direct.set_write_timeout(Some(Duration::from_secs(2)))?;
                 drain_dummy_and_meta(&mut direct)?;
                 let text = ss(0, "e2e test");
-                send_one(&mut direct, &ControlMessage::InjectText(InjectText { text }))?;
+                send_one(
+                    &mut direct,
+                    &ControlMessage::InjectText(InjectText { text }),
+                )?;
                 ok()
             }
-            "press_home" => { s.press_home()?; ok() }
-            "press_back" => { s.press_back()?; ok() }
-            "open_recents" => { s.open_recents()?; ok() }
-            "volume_up" => { s.volume_up()?; ok() }
-            "volume_down" => { s.volume_down()?; ok() }
-            "volume_mute" => { s.volume_mute()?; ok() }
-            "launch_app" => { s.launch_app(&ss(0,"com.android.settings"))?; ok() }
+            "press_home" => {
+                s.press_home()?;
+                ok()
+            }
+            "press_back" => {
+                s.press_back()?;
+                ok()
+            }
+            "open_recents" => {
+                s.open_recents()?;
+                ok()
+            }
+            "volume_up" => {
+                s.volume_up()?;
+                ok()
+            }
+            "volume_down" => {
+                s.volume_down()?;
+                ok()
+            }
+            "volume_mute" => {
+                s.volume_mute()?;
+                ok()
+            }
+            "launch_app" => {
+                s.launch_app(&ss(0, "com.android.settings"))?;
+                ok()
+            }
             "tap_android_key" => {
-                let kc = match ss(0,"ENTER").as_str() {
-                    "HOME" => AndroidKeycode::HOME, "BACK" => AndroidKeycode::BACK,
-                    "DPAD_UP" => AndroidKeycode::DPAD_UP, "DPAD_DOWN" => AndroidKeycode::DPAD_DOWN,
-                    "DPAD_LEFT" => AndroidKeycode::DPAD_LEFT, "DPAD_RIGHT" => AndroidKeycode::DPAD_RIGHT,
+                let kc = match ss(0, "ENTER").as_str() {
+                    "HOME" => AndroidKeycode::HOME,
+                    "BACK" => AndroidKeycode::BACK,
+                    "DPAD_UP" => AndroidKeycode::DPAD_UP,
+                    "DPAD_DOWN" => AndroidKeycode::DPAD_DOWN,
+                    "DPAD_LEFT" => AndroidKeycode::DPAD_LEFT,
+                    "DPAD_RIGHT" => AndroidKeycode::DPAD_RIGHT,
                     "ENTER" => AndroidKeycode::ENTER,
-                    _ => AndroidKeycode::new(u(0,66)),
+                    _ => AndroidKeycode::new(u(0, 66)),
                 };
-                s.tap_android_key(kc)?; ok()
+                s.tap_android_key(kc)?;
+                ok()
             }
-            "show_notifications" => { s.show_notifications()?; ok() }
-            "show_quick_settings" => { s.show_quick_settings()?; ok() }
-            "collapse_panels" => { s.collapse_panels()?; ok() }
-            "set_screen_power" => { s.set_screen_power(b(0,true))?; ok() }
-            "set_clipboard" => { s.set_clipboard(&ss(0,"e2e"), b(1,false))?; ok() }
-            "scroll" => { s.scroll(i(0,540), i(1,1200), f(2,0.0), f(3,-2.0))?; ok() }
-            "three_finger_screenshot" => { s.three_finger_screenshot()?; ok() }
-            "open_hard_keyboard_settings" => { s.open_hard_keyboard_settings()?; ok() }
-            "rotate_device" => { s.rotate_device()?; ok() }
-            "set_torch" => { s.set_torch(b(0,false))?; ok() }
-            "key" => { s.key(u8_a(0,0x04), b(1,true), Modifiers::empty())?; ok() }
+            "show_notifications" => {
+                s.show_notifications()?;
+                ok()
+            }
+            "show_quick_settings" => {
+                s.show_quick_settings()?;
+                ok()
+            }
+            "collapse_panels" => {
+                s.collapse_panels()?;
+                ok()
+            }
+            "set_screen_power" => {
+                s.set_screen_power(b(0, true))?;
+                ok()
+            }
+            "set_clipboard" => {
+                s.set_clipboard(&ss(0, "e2e"), b(1, false))?;
+                ok()
+            }
+            "scroll" => {
+                s.scroll(i(0, 540), i(1, 1200), f(2, 0.0), f(3, -2.0))?;
+                ok()
+            }
+            "three_finger_screenshot" => {
+                s.three_finger_screenshot()?;
+                ok()
+            }
+            "open_hard_keyboard_settings" => {
+                s.open_hard_keyboard_settings()?;
+                ok()
+            }
+            "rotate_device" => {
+                s.rotate_device()?;
+                ok()
+            }
+            "set_torch" => {
+                s.set_torch(b(0, false))?;
+                ok()
+            }
+            "key" => {
+                s.key(u8_a(0, 0x04), b(1, true), Modifiers::empty())?;
+                ok()
+            }
             "set_button" => {
-                let b_str = ss(0,"South");
+                let b_str = ss(0, "South");
                 let btn = match b_str.as_str() {
-                    "South" => GamepadButton::South, "East" => GamepadButton::East,
-                    "West" => GamepadButton::West, "North" => GamepadButton::North,
-                    "Start" => GamepadButton::Start, _ => GamepadButton::South,
+                    "South" => GamepadButton::South,
+                    "East" => GamepadButton::East,
+                    "West" => GamepadButton::West,
+                    "North" => GamepadButton::North,
+                    "Start" => GamepadButton::Start,
+                    _ => GamepadButton::South,
                 };
-                s.set_button(btn, b(1,true))?; ok()
+                s.set_button(btn, b(1, true))?;
+                ok()
             }
-            "mouse_motion" => { s.mouse_motion(i(0,5), i(1,0), u8_a(2,0))?; ok() }
+            "mouse_motion" => {
+                s.mouse_motion(i(0, 5), i(1, 0), u8_a(2, 0))?;
+                ok()
+            }
             "set_stick" => {
-                let ax_str = ss(0,"LeftX");
+                let ax_str = ss(0, "LeftX");
                 let ax = match ax_str.as_str() {
-                    "LeftX" => GamepadAxis::LeftX, "LeftY" => GamepadAxis::LeftY,
-                    "RightX" => GamepadAxis::RightX, "RightY" => GamepadAxis::RightY,
-                    "LeftTrigger" => GamepadAxis::LeftTrigger, "RightTrigger" => GamepadAxis::RightTrigger,
+                    "LeftX" => GamepadAxis::LeftX,
+                    "LeftY" => GamepadAxis::LeftY,
+                    "RightX" => GamepadAxis::RightX,
+                    "RightY" => GamepadAxis::RightY,
+                    "LeftTrigger" => GamepadAxis::LeftTrigger,
+                    "RightTrigger" => GamepadAxis::RightTrigger,
                     _ => GamepadAxis::LeftX,
                 };
-                s.set_stick(ax, f(1,0.0))?; ok()
+                s.set_stick(ax, f(1, 0.0))?;
+                ok()
             }
             "done" => ok(),
             _ => Err(format!("unknown dispatch function: {name}").into()),
@@ -507,8 +887,14 @@ fn run_dispatch(args: &[String]) -> Result<()> {
 
     s.close()?;
     match r {
-        Ok(v) => { println!("{}", v.to_pretty_string()); Ok(()) }
-        Err(e) => { eprintln!("dispatch err: {e}"); Err(e) }
+        Ok(v) => {
+            println!("{}", v.to_pretty_string());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("dispatch err: {e}");
+            Err(e)
+        }
     }
 }
 
@@ -545,14 +931,34 @@ enum Json {
 }
 
 impl Json {
-    fn null() -> Self { Json::Null }
-    fn bool(b: bool) -> Self { Json::Bool(b) }
-    fn num(n: u64) -> Self { Json::Num(n) }
-    fn str(s: &str) -> Self { Json::Str(s.to_string()) }
-    fn arr() -> Self { Json::Arr(Vec::new()) }
-    fn obj() -> Self { Json::Obj(Vec::new()) }
-    fn push(&mut self, v: Json) { if let Json::Arr(a) = self { a.push(v); } }
-    fn set(&mut self, k: &str, v: Json) { if let Json::Obj(o) = self { o.push((k.to_string(), v)); } }
+    fn null() -> Self {
+        Json::Null
+    }
+    fn bool(b: bool) -> Self {
+        Json::Bool(b)
+    }
+    fn num(n: u64) -> Self {
+        Json::Num(n)
+    }
+    fn str(s: &str) -> Self {
+        Json::Str(s.to_string())
+    }
+    fn arr() -> Self {
+        Json::Arr(Vec::new())
+    }
+    fn obj() -> Self {
+        Json::Obj(Vec::new())
+    }
+    fn push(&mut self, v: Json) {
+        if let Json::Arr(a) = self {
+            a.push(v);
+        }
+    }
+    fn set(&mut self, k: &str, v: Json) {
+        if let Json::Obj(o) = self {
+            o.push((k.to_string(), v));
+        }
+    }
     fn write_into(&self, out: &mut String, ind: usize) {
         match self {
             Json::Null => out.push_str("null"),
@@ -562,8 +968,10 @@ impl Json {
                 out.push('"');
                 for ch in s.chars() {
                     match ch {
-                        '"' => out.push_str("\\\""), '\\' => out.push_str("\\\\"),
-                        '\n' => out.push_str("\\n"), '\r' => out.push_str("\\r"),
+                        '"' => out.push_str("\\\""),
+                        '\\' => out.push_str("\\\\"),
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
                         '\t' => out.push_str("\\t"),
                         c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
                         c => out.push(c),
@@ -582,19 +990,36 @@ impl Json {
     }
 }
 
-fn write_seq<'a, I: Iterator<Item = (&'a str, &'a Json)>>(out: &mut String, ind: usize, open: char, close: char, iter: I) {
+fn write_seq<'a, I: Iterator<Item = (&'a str, &'a Json)>>(
+    out: &mut String,
+    ind: usize,
+    open: char,
+    close: char,
+    iter: I,
+) {
     let v: Vec<_> = iter.collect();
-    if v.is_empty() { out.push(open); out.push(close); return; }
-    let pad = "  ".repeat(ind); let pad_in = "  ".repeat(ind + 1);
-    out.push(open); out.push('\n');
+    if v.is_empty() {
+        out.push(open);
+        out.push(close);
+        return;
+    }
+    let pad = "  ".repeat(ind);
+    let pad_in = "  ".repeat(ind + 1);
+    out.push(open);
+    out.push('\n');
     for (i, (k, val)) in v.iter().enumerate() {
         out.push_str(&pad_in);
         if !k.is_empty() {
-            out.push('"'); out.push_str(&k.replace('"', "\\\"")); out.push_str("\": ");
+            out.push('"');
+            out.push_str(&k.replace('"', "\\\""));
+            out.push_str("\": ");
         }
         val.write_into(out, ind + 1);
-        if i + 1 < v.len() { out.push(','); }
+        if i + 1 < v.len() {
+            out.push(',');
+        }
         out.push('\n');
     }
-    out.push_str(&pad); out.push(close);
+    out.push_str(&pad);
+    out.push(close);
 }

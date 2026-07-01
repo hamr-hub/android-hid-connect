@@ -36,17 +36,11 @@ use crate::stream_engine::StreamEngine;
 pub enum WaitOutcome {
     /// Predicate matched within the deadline. Wrapper around
     /// [`PredicateResult::Matched`] with the elapsed ms.
-    Matched {
-        elapsed: Duration,
-    },
+    Matched { elapsed: Duration },
     /// Predicate timed out.
-    Timeout {
-        elapsed: Duration,
-    },
+    Timeout { elapsed: Duration },
     /// Stream exhausted before the predicate could match.
-    StreamClosed {
-        elapsed: Duration,
-    },
+    StreamClosed { elapsed: Duration },
 }
 
 /// Drive the predicate engine until it sees a match (or the
@@ -90,8 +84,7 @@ where
         let results = predicate_engine.on_observation(&obs);
         // Match against the predicate's handle.
         for (h, outcome) in results {
-            if h == handle
-                && matches!(outcome, crate::predicate_engine::PredicateOutcome::Matched)
+            if h == handle && matches!(outcome, crate::predicate_engine::PredicateOutcome::Matched)
             {
                 let _ = predicate_engine.cancel(handle);
                 return WaitOutcome::Matched {
@@ -277,9 +270,7 @@ mod tests {
         let matching = crate::observation::DeviceEvent::ActivityResumed {
             component: "p/.a".into(),
         };
-        let non_matching = crate::observation::DeviceEvent::SceneChangeDetected {
-            score: 0.0,
-        };
+        let non_matching = crate::observation::DeviceEvent::SceneChangeDetected { score: 0.0 };
         let mut i = 0;
         let outcome = wait_for(
             &pred,

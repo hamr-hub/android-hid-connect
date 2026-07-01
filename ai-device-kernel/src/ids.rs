@@ -19,8 +19,8 @@
 //! See v3 §3.2.0 (ScreenId), §3.2.1 (ActionId), §3.2.2 (PlanId/StepId),
 //! §3.2.4 (PredicateId) for the design intent.
 
-use serde::{Deserialize, Serialize};
 use schemars::{gen::SchemaGenerator, schema::Schema, JsonSchema};
+use serde::{Deserialize, Serialize};
 
 /// Server-assigned action ID. u64 → 8 bytes on the wire, monotonic
 /// across the daemon lifetime. Used for idempotent retry: a replayed
@@ -28,9 +28,7 @@ use schemars::{gen::SchemaGenerator, schema::Schema, JsonSchema};
 ///
 /// Manual `Serialize`/`Deserialize` so postcard bypasses the
 /// tuple-struct tag byte (8 bytes raw, not 8 + 1).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ActionId(pub u64);
 
 impl Serialize for ActionId {
@@ -78,9 +76,7 @@ impl std::fmt::Display for ActionId {
 }
 
 /// Server-assigned plan ID. u64, same wire layout as [`ActionId`].
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlanId(pub u64);
 
 impl Serialize for PlanId {
@@ -126,9 +122,7 @@ impl std::fmt::Display for PlanId {
 /// Server-assigned step index within a `Plan`. 0-based; `u32` (the
 /// design targets plans of < 10⁵ steps and we want postcard-friendly
 /// 4-byte encoding on the wire).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StepId(pub u32);
 
 impl Serialize for StepId {
@@ -168,9 +162,7 @@ impl std::fmt::Display for StepId {
 /// Server-assigned predicate ID. Created when a `Predicate` is
 /// registered with the predicate engine; torn down on expiry or
 /// manual cancel.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PredicateHandle(pub u64);
 
 impl Serialize for PredicateHandle {
@@ -214,9 +206,7 @@ impl std::fmt::Display for PredicateHandle {
 /// screen renders to the same tree. Used as the Memory layer key
 /// (Phase 3) so the kernel can recall "what worked on this screen
 /// last time".
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ScreenId(pub [u8; 16]);
 

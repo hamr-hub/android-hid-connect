@@ -18,21 +18,15 @@
 //!   then on a fixed 50 ms heartbeat for sub-event liveness — see
 //!   v3 §3.2.4 "0 polling, 0 CPU 浪费 (P4 间接解)".
 
+use schemars::{gen::SchemaGenerator, schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
-use schemars::{
-    gen::SchemaGenerator,
-    schema::Schema,
-    JsonSchema,
-};
 
 use crate::observation::DeviceEvent;
 
 /// Identifier for a registered predicate. Returned by
 /// `Protocol::register_predicate` so the host can later cancel or
 /// differentiate completions when multiple predicates are in flight.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PredicateHandle(pub u64);
 
@@ -331,10 +325,7 @@ mod tests {
             EventKind::from_event(&DeviceEvent::SceneChangeDetected { score: 0.1 }),
             Some(EventKind::SceneChangeDetected),
         );
-        assert!(
-            EventKind::from_event(&DeviceEvent::Uptime { uptime_ms: 0 })
-                .is_none(),
-        );
+        assert!(EventKind::from_event(&DeviceEvent::Uptime { uptime_ms: 0 }).is_none(),);
     }
 
     #[test]

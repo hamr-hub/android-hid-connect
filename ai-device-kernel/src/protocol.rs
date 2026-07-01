@@ -335,8 +335,7 @@ impl Frame {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let len = self.payload.len();
-        let mut buf =
-            Vec::with_capacity(2 + varint_size(len) + len);
+        let mut buf = Vec::with_capacity(2 + varint_size(len) + len);
         buf.push(self.verb.byte());
         buf.push(self.flags.bits());
         encode_varint(&mut buf, len);
@@ -512,8 +511,7 @@ mod tests {
             let mut buf = Vec::new();
             encode_varint(&mut buf, n);
             assert_eq!(varint_size(n), buf.len(), "wrong size for n={n}");
-            let (decoded, consumed) =
-                decode_varint(&buf).expect("decode varint");
+            let (decoded, consumed) = decode_varint(&buf).expect("decode varint");
             assert_eq!(decoded, n, "mismatch for n={n}");
             assert_eq!(consumed, buf.len(), "wrong consumed for n={n}");
         }
@@ -626,8 +624,7 @@ mod tests {
         // Header only (no payload).
         assert!(Frame::decode(&[Verb::Action.byte(), 0]).is_none());
         // Length claims more bytes than available.
-        assert!(Frame::decode(&[Verb::Action.byte(), 0, 0x05, 0x01, 0x02])
-            .is_none());
+        assert!(Frame::decode(&[Verb::Action.byte(), 0, 0x05, 0x01, 0x02]).is_none());
     }
 
     #[test]
@@ -660,9 +657,7 @@ mod tests {
         // Plan round-trip preserves all plan fields.
         let request = RequestPayload::Plan {
             id: PlanId(7),
-            plan: Plan::new(vec![])
-                .with_abort(false)
-                .with_checkpoint_every(3),
+            plan: Plan::new(vec![]).with_abort(false).with_checkpoint_every(3),
         };
         let frame = Frame::request(&request);
         let encoded = frame.encode();

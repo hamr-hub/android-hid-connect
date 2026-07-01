@@ -8,22 +8,23 @@
 
 ## 1. 项目定位 (在动手前先读完)
 
-`android-hid-connect` 是一个 **Rust 库 crate**(不是 CLI,不是 service),目的是把 scrcpy 客户端 C 源码中控制协议相关部分 — 22 种 control message + 3 种 AI 扩展 + 3 种 HID 设备驱动 — 用 Rust 重写一遍。
+`android-hid-connect` 是一个 **AI 中间件**(Rust workspace,3 个 crate + 1 个二进制 `adk`),目的是把 LLM 的 typed `Action` 翻译成 Android 设备上的真实输入。它由两个互补的部分构成:
 
-### Workspace 布局 (2026-06-29 起)
+- **byte-exact scrcpy UHID core**(本 crate 的 `src/`):22 种 control message + 3 种 AI 扩展 + 3 种 HID 设备驱动的纯 Rust 重写。
+- **`ai-device-kernel`**(sibling crate):THE AI middleware — 12 typed `Action` + ground-truth-in-1-RTT + predicate engine + 4-verb postcard 协议 + capability registry + SQLite-backed memory。
 
-本目录同时是 **Cargo workspace root** 和一个 workspace member(`android-hid-connect` 库本体)。byte-exact HID core 仍然位于本目录的 `src/`,API 与公开 re-export 完全不变;新增的 5 个 sibling crate 放在同级的 `android-hid-{protocol,daemon,agent,cli,py}/` 子目录,用于补齐 handsets 同等能力(a11y / 截图 / pm/am / 文件 / 等待 / provider / 流)。
+### Workspace 布局 (2026-07-01 起,ADR-0015)
 
-| crate | 角色 | 依赖方向 |
-| ----- | ---- | -------- |
-| `android-hid-connect` (root) | byte-exact scrcpy UHID core | — |
+本目录同时是 **Cargo workspace root** 和一个 workspace member(`android-hid-connect` 库本体)。Workspace 包含 3 个 crate,1 个 binary:
+
+| crate / binary | 角色 | 依赖方向 |
+| -------------- | ---- | -------- |
+| `android-hid-connect` (root, lib) | byte-exact scrcpy UHID core | → protocol |
 | `android-hid-protocol` | wire 协议类型(verb / error / frame / k=v / version)| 无 |
-| `android-hid-daemon` | 设备端 daemon 库(以后交叉编译进 Android 进程) | protocol |
-| `android-hid-agent` | host 侧 typed Rust facade(daemon 优先 + scrcpy fallback) | protocol + root crate |
-| `android-hid-cli` (`ah`) | host 侧 CLI 入口 | protocol + agent |
-| `android-hid-py` (`android_hid`) | PyO3 binding(Phase 7 落地)| protocol + agent |
+| `ai-device-kernel` (lib) | THE AI middleware: 12 typed Action + Plan + Observation + Predicate + Capability | → protocol + root |
+| `adk` (binary in `ai-device-kernel`) | on-device daemon, port 9008, postcard/4-verb protocol | — |
 
-本 `AGENTS.md` 只约束 root crate(`src/` 字节布局、`hid`/`control`/`ai` 纯度、batcher 等);每个 sibling crate 自己的 `AGENTS.md`(后续 phase 加入)负责该 crate 内部规则。
+本 `AGENTS.md` 约束 **root crate**(`src/` 字节布局、`hid`/`control`/`ai` 纯度、batcher 等);`ai-device-kernel` 的内部规则写在它自己的源码注释和 `docs/ai-device-kernel-v3-design.md`。**4 个 sibling crate 已于 2026-07-01 删除**(`android-hid-{daemon,agent,cli,py}` + root `src/agent/`),见 ADR-0015。
 
 四件事不能破:
 
@@ -60,17 +61,20 @@ android-hid-connect/
 │   ├── scrcpy-protocol-compatibility.md
 │   ├── ai-agent-integration.md
 │   ├── development.md
-│   ├── comparison-with-handsets.md   # 已有,跨项目对比
-│   └── roadmap-exceed-handsets.md    # 7-phase 实施路线图
-├── android-hid-protocol/       # wire verb / error / frame / k=v / version — 最低层
-├── android-hid-daemon/         # on-device 库(后续交叉编译进 Android 进程)
-├── android-hid-agent/          # host 侧 typed Rust facade(daemon 优先 + scrcpy fallback)
-├── android-hid-cli/            # `ah` 二进制,瘦壳套在 agent 之上
-├── android-hid-py/             # PyO3 binding 骨架,Phase 7 填实
+│   └── adr/                       # 15 ADRs,见 docs/INDEX.md
+├── android-hid-protocol/   # wire verb / error / frame / k=v / version — 最低层
+├── ai-device-kernel/       # THE AI middleware — lib + adk binary
+│   ├── src/
+│   │   ├── bridge.rs       # Action → UHID 字节执行路径
+│   │   ├── bin/
+│   │   │   ├── adk.rs      # on-device daemon (port 9008)
+│   │   │   └── adk-bench.rs# CI 跑分(p99 < 5ms)
+│   │   └── ...             # action/plan/observation/predicate/...
+│   └── tests/
 └── .github/
-    ├── workflows/ci.yml        # 3-OS 矩阵 + MSRV
+    ├── workflows/ci.yml        # 3-OS 矩阵 + MSRV + adk-bench smoke
     ├── dependabot.yml          # weekly cargo deps
-    └── release-please.yml      # 自动 release
+    └── release-please.yml      # 自动 release(3 个 package)
 ```
 
 新增顶层目录前先在 PR 里说明 — 当前结构是有意的。
@@ -90,15 +94,6 @@ src/
 │   └── mod.rs
 ├── session.rs          # HidSession 生命周期(panic-safe Drop,UHID_DESTROY)
 ├── client.rs           # HidClient(mpsc 多生产者 + 1 dispatcher)+ 各种 fixed-stack batcher
-├── agent/              # AgentControlSession — 给 LLM 用的高层 facade
-│   ├── mod.rs          # 入口 + 公开类型聚合
-│   ├── session.rs      # 同步 session(Read+Write 传输)
-│   ├── session_tcp.rs  # TCP session + read timeout 恢复
-│   ├── action.rs       # AgentAction typed plan 枚举
-│   ├── types.rs        # AgentPoint/AgentRect/AgentTouchFrame/AgentScrollFrame/...
-│   ├── geometry.rs     # 坐标系转换(basis-point → pixel)
-│   ├── estimator.rs    # AgentPlanSummary / AgentPlanBoundedPrefix
-│   └── tests.rs        # 模块内单元测试
 ├── device.rs           # 同步 device→host reverse parser(3 native msg + AI envelope)
 ├── async_device.rs     # #[cfg(feature = "tokio")] 异步 adapter,与同步版字节语义一致
 ├── transport/          # open_tcp + MockTransport + send_one/send_batch
@@ -182,24 +177,23 @@ src/
 ### 2.6 `docs/` 规则
 
 - 每个文档一个专题,文件名小写 + 连字符。
-- 必有的文件:`INDEX.md`(目录索引,新文档必须更新)、`architecture.md`、`wire-format.md`、`scrcpy-protocol-compatibility.md`、`ai-agent-integration.md`、`development.md`。
-- 跨项目对比(`comparison-with-handsets.md`)单独保留,不属于本 crate 内部。
+- 必有的文件:`INDEX.md`(目录索引,新文档必须更新)、`architecture.md`、`wire-format.md`、`scrcpy-protocol-compatibility.md`、`ai-agent-integration.md`、`development.md`、`adr/`。
+- ADR 编号顺序写入;**删除过时 ADR 时直接删文件**,不要再加 deprecated 段(2026-07-01 ADR-0015 决策)。
 - 文档代码示例用 ```rust,no_run 或 ```text,不要在文档里跑真实命令的输出。
 - 文档里的数字(测试数、版本号、跑分日期)**要可复现**:改了测试数或 scrcpy 版本号,立刻同步更新所有引用它的文档。
 
-### 2.7 兄弟 crate 协作约束
+### 2.7 兄弟 crate 协作约束 (post-ADR-0015)
 
-sibling crate 在 `android-hid-{protocol,daemon,agent,cli,py}/`,每个都有自己的 `Cargo.toml`。它们不在本 `AGENTS.md` 的硬约束范围内,但依赖方向和最低规则如下:
+sibling crate 在 `ai-device-kernel/`,有自己的 `Cargo.toml`。它不在本 `AGENTS.md` 的硬约束范围内,但依赖方向和最低规则如下:
 
 | crate | 角色 | 依赖方向 | 最低规则 |
 | ----- | ---- | -------- | -------- |
 | `android-hid-protocol` | wire 协议类型(verb / error / frame / k=v / version),无 I/O、无 FFI | — | 纯函数 / `unsafe_code = "forbid"` / `rust_2018_idioms` warn |
-| `android-hid-daemon` | 设备端 daemon 库(运行在 Android 进程里) | → protocol | 不依赖 root crate;Phase 2+ 引入 std / binder;后续交叉编译 |
-| `android-hid-agent` | host 侧 typed Rust facade;首选 daemon 后端,scrcpy 后端 fallback | → protocol + 根 crate | 不暴露 root crate 的 `HidClient` / `HidSession` 内部细节;agent 公开 API 用 typed plan 形态 |
-| `android-hid-cli` (`ah`) | 瘦 binary:argument parsing + 调 `android-hid-agent` | → protocol + agent | `[profile.release]` 继承 workspace 的小尺寸设置 |
-| `android-hid-py` (`android_hid`) | PyO3 binding(Phase 7 填实)| → protocol + agent | `crate-type = ["cdylib"]`;Phase 1 不引入 `pyo3` dep,Phase 7 加 `pyo3` 时用 optional feature gate |
+| `ai-device-kernel` | THE AI middleware: typed Action + Plan + Observation + Predicate + Capability | → protocol + 根 crate | `bridge` 模块直接调根 crate 的 `HidSession`;typed Action 变更是 SemVer minor |
 
-依赖方向**只能**向下(root → protocol;daemon → protocol;agent → protocol + root crate;cli → agent;py → agent)。**禁止**反向(例如 daemon 引 root crate,cli 引 daemon,protocol 引 agent)。任何反向依赖都打回 PR。
+依赖方向**只能**向下(root → protocol;ai-device-kernel → protocol + root)。**禁止**反向(例如 ai-device-kernel 引根 crate 的内部细节而不走 bridge,protocol 引 ai-device-kernel)。任何反向依赖都打回 PR。
+
+历史(2026-07-01 之前):曾存在 `android-hid-{daemon,agent,cli,py}` 4 个 sibling crate + 根 `src/agent/`。已于 ADR-0015 删除,**不再复活**;如需历史 API,git tag `pre-adr-0015` 取回。
 
 每个 sibling crate 自己的 lint 由各 crate 的 `Cargo.toml` 显式声明(目前都是 `unsafe_code = "forbid"` + `rust_2018_idioms` warn + `clippy::all` warn)。
 
@@ -254,8 +248,8 @@ sibling crate 在 `android-hid-{protocol,daemon,agent,cli,py}/`,每个都有自�
 
 - ❌ `hid` / `control` / `ai` / `types` 出现任何形式的 I/O(网络/文件/进程/系统时间)。
 - ❌ `device.rs` 和 `async_device.rs` 互相 `use`(它们是并列实现,不是父子关系)。
-- ❌ 在 `agent/` 模块外出现 `Agent*` 公开类型(保持 facade 单点入口)。
 - ❌ 在 `lib.rs` re-export 任何 `pub(crate)` 或 internal 类型。
+- ❌ 在 `src/` 重新引入 `agent/` 子模块(2026-07-01 ADR-0015 决策,唯一 AI facade 是 `ai-device-kernel`)。
 
 ### 4.3 测试层
 

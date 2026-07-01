@@ -87,7 +87,10 @@ fn gamepad_ring_overflow_preserves_oldest() {
     // The first RING_CAPACITY frames must still be there.
     for i in 0..RING_CAPACITY as u64 {
         let popped = ring.pop().expect("preserved");
-        assert_eq!(popped.buttons, i as u32, "FIFO order preserved under back-pressure");
+        assert_eq!(
+            popped.buttons, i as u32,
+            "FIFO order preserved under back-pressure"
+        );
     }
 }
 
@@ -99,7 +102,8 @@ fn gamepad_ring_wraparound_round_trip() {
     let ring = GamepadFrameRing::new();
     for cycle in 0..(RING_CAPACITY as u64 + 1) * 10 {
         let seq = cycle;
-        ring.push(frame(seq)).expect("push always succeeds after drain");
+        ring.push(frame(seq))
+            .expect("push always succeeds after drain");
         let popped = ring.pop().expect("pop should yield");
         assert_eq!(popped.buttons, seq as u32);
     }

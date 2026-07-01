@@ -57,11 +57,10 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ai_device_kernel::{
-    Action, ActionResult, A11yNodeChangeKind, A11yNodeDiff, A11yTree, ActionId,
-    DeviceEvent, DeviceState, Frame, FrameFlags, FrameSnapshot, GroundTruth,
-    Memory, Observation, ObservationComponent, PlanResult, ReplyPayload,
-    RequestPayload, StateModel, StepResult, StreamEngine, SubscriberHandle,
-    UiReprClass, UiReprHtml, UiReprNode, Verb,
+    A11yNodeChangeKind, A11yNodeDiff, A11yTree, Action, ActionId, ActionResult, DeviceEvent,
+    DeviceState, Frame, FrameFlags, FrameSnapshot, GroundTruth, Memory, Observation,
+    ObservationComponent, PlanResult, ReplyPayload, RequestPayload, StateModel, StepResult,
+    StreamEngine, SubscriberHandle, UiReprClass, UiReprHtml, UiReprNode, Verb,
 };
 
 // ---------------------------------------------------------------------------
@@ -125,20 +124,17 @@ impl SharedState {
             .saturating_sub(self.started_ms)
     }
 
-    fn record_success(
-        &self,
-        sid: ai_device_kernel::ScreenId,
-        action: Action,
-    ) {
+    fn record_success(&self, sid: ai_device_kernel::ScreenId, action: Action) {
         let mut mem = self.memory.lock().unwrap();
         mem.record_success(sid, action);
-        eprintln!("[adk] memory.record_success sid={} actions_in_mem={}",
-                 sid, mem.len());
+        eprintln!(
+            "[adk] memory.record_success sid={} actions_in_mem={}",
+            sid,
+            mem.len()
+        );
         if let (Some(conn), Some(_)) = (self.sqlite.lock().unwrap().as_ref(), &self.sqlite_path) {
             if let Some(entry) = mem.peek(sid) {
-                match ai_device_kernel::memory_sqlite_backend::persist_screen(
-                    conn, sid, entry,
-                ) {
+                match ai_device_kernel::memory_sqlite_backend::persist_screen(conn, sid, entry) {
                     Ok(_) => eprintln!("[adk] persisted screen {} to sqlite", sid),
                     Err(e) => eprintln!("[adk] persist_screen failed: {e}"),
                 }
@@ -194,7 +190,12 @@ impl Flags {
                 }
             }
         }
-        Self { port, device, no_adb, state_db }
+        Self {
+            port,
+            device,
+            no_adb,
+            state_db,
+        }
     }
 }
 
@@ -204,8 +205,10 @@ impl Flags {
 
 fn adb_shell(flags: &Flags, command: &str) -> Result<String, String> {
     if flags.no_adb {
-        eprintln!("[adk/--no-adb] would run: adb {device} shell {command}",
-                  device = flags.device.as_deref().unwrap_or(""));
+        eprintln!(
+            "[adk/--no-adb] would run: adb {device} shell {command}",
+            device = flags.device.as_deref().unwrap_or("")
+        );
         return Ok(String::new());
     }
     let mut cmd = Command::new("adb");
@@ -286,16 +289,16 @@ fn read_png_dimensions(bytes: &[u8]) -> Option<(u16, u16)> {
 // Predicate check (event-driven — AC-V3-2.3)
 // ---------------------------------------------------------------------------
 
-fn check_predicate(predicate: &ai_device_kernel::Predicate,
-                   focused_app: Option<&str>,
-                   dumpsys_text: &str) -> bool {
+fn check_predicate(
+    predicate: &ai_device_kernel::Predicate,
+    focused_app: Option<&str>,
+    dumpsys_text: &str,
+) -> bool {
     match predicate {
         ai_device_kernel::Predicate::Activity { component, .. } => {
             focused_app.map(|c| c == component).unwrap_or(false)
         }
-        ai_device_kernel::Predicate::TextAppears { text, .. } => {
-            dumpsys_text.contains(text)
-        }
+        ai_device_kernel::Predicate::TextAppears { text, .. } => dumpsys_text.contains(text),
         ai_device_kernel::Predicate::SelectorMatches { selector, .. } => {
             dumpsys_text.contains(selector)
         }
@@ -362,37 +365,64 @@ fn build_ui_repr_html(focused_app: Option<&str>, dumpsys_text: &str) -> UiReprHt
 // Action execution
 // ---------------------------------------------------------------------------
 
-fn execute_action(
-    action: &Action,
-    flags: &Flags,
-    shared: &Arc<SharedState>,
-) -> ActionResult {
+fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> ActionResult {
     let start = Instant::now();
     let seq = next_obs_seq();
 
     let (landed, ground_truth, _err): (bool, GroundTruth, Option<String>) = match action {
-        Action::Tap { x, y, deadline_ms: _ } => {
+        Action::Tap {
+            x,
+            y,
+            deadline_ms: _,
+        } => {
             let cmd = format!("input tap {x} {y}");
             match adb_shell(flags, &cmd) {
-                Ok(_) => (true, GroundTruth { scene_change: 0.3, ..Default::default() }, None),
+                Ok(_) => (
+                    true,
+                    GroundTruth {
+                        scene_change: 0.3,
+                        ..Default::default()
+                    },
+                    None,
+                ),
                 Err(e) => (false, GroundTruth::default(), Some(e)),
             }
         }
-        Action::Swipe { x1, y1, x2, y2, dur_ms, deadline_ms: _ } => {
+        Action::Swipe {
+            x1,
+            y1,
+            x2,
+            y2,
+            dur_ms,
+            deadline_ms: _,
+        } => {
             let cmd = format!("input swipe {x1} {y1} {x2} {y2} {dur_ms}");
             match adb_shell(flags, &cmd) {
-                Ok(_) => (true, GroundTruth { scene_change: 0.5, ..Default::default() }, None),
+                Ok(_) => (
+                    true,
+                    GroundTruth {
+                        scene_change: 0.5,
+                        ..Default::default()
+                    },
+                    None,
+                ),
                 Err(e) => (false, GroundTruth::default(), Some(e)),
             }
         }
-        Action::Key { code, deadline_ms: _ } => {
+        Action::Key {
+            code,
+            deadline_ms: _,
+        } => {
             let cmd = format!("input keyevent {code}");
             match adb_shell(flags, &cmd) {
                 Ok(_) => (true, GroundTruth::default(), None),
                 Err(e) => (false, GroundTruth::default(), Some(e)),
             }
         }
-        Action::TypeText { text, deadline_ms: _ } => {
+        Action::TypeText {
+            text,
+            deadline_ms: _,
+        } => {
             if !text.is_ascii() {
                 return ActionResult {
                     id: ActionId(seq),
@@ -408,50 +438,72 @@ fn execute_action(
                 Err(e) => (false, GroundTruth::default(), Some(e)),
             }
         }
-        Action::Launch { target, by: _, deadline_ms: _ } => {
+        Action::Launch {
+            target,
+            by: _,
+            deadline_ms: _,
+        } => {
             let cmd = format!("am start -n {target}");
             match adb_shell(flags, &cmd) {
                 Ok(out) => {
                     let top = out.lines().next().unwrap_or("").to_string();
-                    (true, GroundTruth {
-                        focus: Some(top.len() as u32),
-                        scene_change: 0.8,
-                        ..Default::default()
-                    }, None)
+                    (
+                        true,
+                        GroundTruth {
+                            focus: Some(top.len() as u32),
+                            scene_change: 0.8,
+                            ..Default::default()
+                        },
+                        None,
+                    )
                 }
                 Err(e) => (false, GroundTruth::default(), Some(e)),
             }
         }
-        Action::DumpObservation { components, deadline_ms: _ } => {
+        Action::DumpObservation {
+            components,
+            deadline_ms: _,
+        } => {
             let want_a11y = components.contains(&ObservationComponent::A11y);
             let want_frame = components.contains(&ObservationComponent::Frame);
             let want_state = components.contains(&ObservationComponent::State);
             let _ = want_a11y;
             let _ = want_frame;
             let _ = want_state;
-            (true, GroundTruth {
-                a11y_diff: vec![A11yNodeDiff {
-                    node_id: 0,
-                    kind: A11yNodeChangeKind::BoundsChanged,
-                    new_text: None,
-                    new_visible: None,
-                }],
-                frame_diff: None,
-                focus: Some(0),
-                scene_change: 0.0,
-                events: vec![],
-            }, None)
+            (
+                true,
+                GroundTruth {
+                    a11y_diff: vec![A11yNodeDiff {
+                        node_id: 0,
+                        kind: A11yNodeChangeKind::BoundsChanged,
+                        new_text: None,
+                        new_visible: None,
+                    }],
+                    frame_diff: None,
+                    focus: Some(0),
+                    scene_change: 0.0,
+                    events: vec![],
+                },
+                None,
+            )
         }
-        Action::GetUiRepr { screen_id: _, deadline_ms: _ } => {
-            (true, GroundTruth::default(), None)
-        }
-        Action::Wait { predicate, deadline_ms: _ } => {
+        Action::GetUiRepr {
+            screen_id: _,
+            deadline_ms: _,
+        } => (true, GroundTruth::default(), None),
+        Action::Wait {
+            predicate,
+            deadline_ms: _,
+        } => {
             let cap = predicate_timeout_ms(predicate).min(5000);
             let t0 = Instant::now();
             let mut satisfied = false;
             while t0.elapsed().as_millis() < cap as u128 {
-                let out = adb_shell(flags, "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-                    .unwrap_or_default();
+                let out = adb_shell(
+                    flags,
+                    "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+                )
+                .unwrap_or_default();
                 let focus = parse_focused_app(&out);
                 if check_predicate(predicate, focus.as_deref(), &out) {
                     satisfied = true;
@@ -459,44 +511,78 @@ fn execute_action(
                 }
                 thread::sleep(Duration::from_millis(100));
             }
-            (satisfied, GroundTruth { scene_change: 0.1, ..Default::default() }, None)
+            (
+                satisfied,
+                GroundTruth {
+                    scene_change: 0.1,
+                    ..Default::default()
+                },
+                None,
+            )
         }
-        Action::LocalizeText { .. } => (true, GroundTruth::default(),
-            Some("LiteRT/ML Kit OCR not yet integrated (env-blocked: NDK)".into())),
-        Action::DetectElement { .. } => (true, GroundTruth::default(),
-            Some("LiteRT/YOLOv8n not yet integrated (env-blocked: NDK)".into())),
-        Action::Ground { .. } => (false, GroundTruth::default(),
-            Some("Florence-2 grounding not yet integrated (env-blocked: NDK)".into())),
-        Action::AskVisual { .. } => (false, GroundTruth::default(),
-            Some("GUI-Owl VQA not yet integrated (env-blocked: weights + NDK)".into())),
+        Action::LocalizeText { .. } => (
+            true,
+            GroundTruth::default(),
+            Some("LiteRT/ML Kit OCR not yet integrated (env-blocked: NDK)".into()),
+        ),
+        Action::DetectElement { .. } => (
+            true,
+            GroundTruth::default(),
+            Some("LiteRT/YOLOv8n not yet integrated (env-blocked: NDK)".into()),
+        ),
+        Action::Ground { .. } => (
+            false,
+            GroundTruth::default(),
+            Some("Florence-2 grounding not yet integrated (env-blocked: NDK)".into()),
+        ),
+        Action::AskVisual { .. } => (
+            false,
+            GroundTruth::default(),
+            Some("GUI-Owl VQA not yet integrated (env-blocked: weights + NDK)".into()),
+        ),
         Action::TapSelector { .. }
         | Action::GamepadFrame { .. }
         | Action::SetClipboard { .. }
-        | Action::InjectRaw { .. } => (false, GroundTruth::default(),
-            Some(format!("{} requires on-device binary (Phase 6.5)", action.kind_label()))),
+        | Action::InjectRaw { .. } => (
+            false,
+            GroundTruth::default(),
+            Some(format!(
+                "{} requires on-device binary (Phase 6.5)",
+                action.kind_label()
+            )),
+        ),
     };
 
     let elapsed_ms = start.elapsed().as_millis() as u32;
 
     // Persist to Memory on success (AC-V3-3.5/3.6).
     if landed {
-        let dumpsys = adb_shell(flags, "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-            .unwrap_or_default();
+        let dumpsys = adb_shell(
+            flags,
+            "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+        )
+        .unwrap_or_default();
         let focus = parse_focused_app(&dumpsys);
-        eprintln!("[adk] post-action landed=true dumpsys_len={} focus={:?}",
-                 dumpsys.len(), focus);
+        eprintln!(
+            "[adk] post-action landed=true dumpsys_len={} focus={:?}",
+            dumpsys.len(),
+            focus
+        );
         if let Some(f) = focus {
             let sid = ai_device_kernel::ScreenId::from_focus(&f);
             shared.record_success(sid, action.clone());
         }
         let mut state = shared.state.lock().unwrap();
-        state.record_action_result(ActionId(seq), ActionResult {
-            id: ActionId(seq),
-            landed,
-            ground_truth: ground_truth.clone(),
-            elapsed_ms,
-            ..Default::default()
-        });
+        state.record_action_result(
+            ActionId(seq),
+            ActionResult {
+                id: ActionId(seq),
+                landed,
+                ground_truth: ground_truth.clone(),
+                elapsed_ms,
+                ..Default::default()
+            },
+        );
     }
     let _ = ground_truth.events; // keep import live for future event push
 
@@ -532,7 +618,9 @@ fn read_request(sock: &mut TcpStream) -> std::io::Result<RequestPayload> {
             let chunk = (byte & 0x7F) as usize;
             value |= chunk << shift;
             shift += 7;
-            if !cont { break; }
+            if !cont {
+                break;
+            }
         }
         if one[0] & 0x80 == 0 {
             break value;
@@ -552,15 +640,18 @@ fn read_request(sock: &mut TcpStream) -> std::io::Result<RequestPayload> {
             0x02 => Verb::Plan,
             0x03 => Verb::Observe,
             0x04 => Verb::Query,
-            _ => return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "unknown verb",
-            )),
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unknown verb",
+                ))
+            }
         },
         flags: FrameFlags::default(),
         payload,
     };
-    frame.decode_request()
+    frame
+        .decode_request()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))
 }
 
@@ -606,13 +697,20 @@ fn handle_observe(
 
 fn build_observation(flags: &Flags, shared: &Arc<SharedState>) -> Observation {
     let seq = next_obs_seq();
-    let out = adb_shell(flags, "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-        .unwrap_or_default();
+    let out = adb_shell(
+        flags,
+        "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+    )
+    .unwrap_or_default();
     let focus = parse_focused_app(&out);
     let frame = adb_screencap(flags).ok().and_then(|b| {
         read_png_dimensions(&b).map(|(w, h)| FrameSnapshot {
-            width: w, height: h, codec: 1,
-            is_keyframe: true, pts: seq, scene_change_score: 0.0,
+            width: w,
+            height: h,
+            codec: 1,
+            is_keyframe: true,
+            pts: seq,
+            scene_change_score: 0.0,
             ..Default::default()
         })
     });
@@ -629,7 +727,9 @@ fn build_observation(flags: &Flags, shared: &Arc<SharedState>) -> Observation {
         a11y,
         frame,
         state: state_struct,
-        events: vec![DeviceEvent::Uptime { uptime_ms: shared.uptime_ms() }],
+        events: vec![DeviceEvent::Uptime {
+            uptime_ms: shared.uptime_ms(),
+        }],
         foreground_app: None,
     };
     // Push through the StreamEngine (multi-subscriber fan-out).
@@ -658,13 +758,20 @@ fn handle_connection(
             // Special path: Action::GetUiRepr returns a UiReprHtml
             // instead of ActionResult.
             if matches!(action, Action::GetUiRepr { .. }) {
-                let out = adb_shell(&flags, "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-                    .unwrap_or_default();
+                let out = adb_shell(
+                    &flags,
+                    "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+                )
+                .unwrap_or_default();
                 let focus = parse_focused_app(&out);
                 let repr = build_ui_repr_html(focus.as_deref(), &out);
                 let size = repr.approx_html_size();
-                eprintln!("[adk] GetUiRepr → screen={} nodes={} approx_bytes={}",
-                         repr.screen, repr.nodes.len(), size);
+                eprintln!(
+                    "[adk] GetUiRepr → screen={} nodes={} approx_bytes={}",
+                    repr.screen,
+                    repr.nodes.len(),
+                    size
+                );
                 write_reply(&mut sock, &ReplyPayload::Action(result))?;
             } else {
                 write_reply(&mut sock, &ReplyPayload::Action(result))?;
@@ -674,7 +781,9 @@ fn handle_connection(
         RequestPayload::Plan { id, plan } => {
             eprintln!(
                 "[adk] plan received: {} step(s), abort_on_error={}, checkpoint_every={}",
-                plan.steps.len(), plan.abort_on_error, plan.checkpoint_every
+                plan.steps.len(),
+                plan.abort_on_error,
+                plan.checkpoint_every
             );
             let plan_id = id;
             let mut results: Vec<StepResult> = Vec::new();
@@ -687,10 +796,15 @@ fn handle_connection(
                     let cap = predicate_timeout_ms(p).min(3000);
                     let t0 = Instant::now();
                     while t0.elapsed().as_millis() < cap as u128 {
-                        let out = adb_shell(&flags, "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-                            .unwrap_or_default();
+                        let out = adb_shell(
+                            &flags,
+                            "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+                        )
+                        .unwrap_or_default();
                         let focus = parse_focused_app(&out);
-                        if check_predicate(p, focus.as_deref(), &out) { break; }
+                        if check_predicate(p, focus.as_deref(), &out) {
+                            break;
+                        }
                         thread::sleep(Duration::from_millis(80));
                     }
                 }
@@ -699,8 +813,11 @@ fn handle_connection(
 
                 let mut verified = true;
                 if let Some(p) = &step.verify_after {
-                    let out = adb_shell(&flags, "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-                        .unwrap_or_default();
+                    let out = adb_shell(
+                        &flags,
+                        "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+                    )
+                    .unwrap_or_default();
                     let focus = parse_focused_app(&out);
                     verified = check_predicate(p, focus.as_deref(), &out);
                 }
@@ -729,8 +846,7 @@ fn handle_connection(
                 }
                 results.push(step_record);
 
-                if plan.checkpoint_every > 0
-                    && (results.len() as u32) % plan.checkpoint_every == 0
+                if plan.checkpoint_every > 0 && (results.len() as u32) % plan.checkpoint_every == 0
                 {
                     let ckpt_obs = build_observation(&flags, &shared);
                     let mut f = Frame::reply(&ReplyPayload::Observation(ckpt_obs));
@@ -741,28 +857,42 @@ fn handle_connection(
             }
             let total_elapsed_ms = total_start.elapsed().as_millis() as u32;
             let final_obs = build_observation(&flags, &shared);
-            write_reply(&mut sock, &ReplyPayload::Plan(PlanResult {
-                plan_id,
-                steps: results,
-                final_observation: final_obs,
-                total_elapsed_ms,
-                all_landed,
-            }))?;
+            write_reply(
+                &mut sock,
+                &ReplyPayload::Plan(PlanResult {
+                    plan_id,
+                    steps: results,
+                    final_observation: final_obs,
+                    total_elapsed_ms,
+                    all_landed,
+                }),
+            )?;
         }
 
-        RequestPayload::Query { a11y, frame, state: want_state } => {
+        RequestPayload::Query {
+            a11y,
+            frame,
+            state: want_state,
+        } => {
             let obs = build_observation(&flags, &shared);
             let a11y_out = if a11y { obs.a11y.clone() } else { None };
             let frame_out = if frame { obs.frame.clone() } else { None };
-            write_reply(&mut sock, &ReplyPayload::Query(Observation {
-                seq: obs.seq,
-                timestamp_ms: obs.timestamp_ms,
-                a11y: a11y_out,
-                frame: frame_out,
-                state: if want_state { obs.state } else { DeviceState::unknown(0) },
-                events: vec![],
-                ..Default::default()
-            }))?;
+            write_reply(
+                &mut sock,
+                &ReplyPayload::Query(Observation {
+                    seq: obs.seq,
+                    timestamp_ms: obs.timestamp_ms,
+                    a11y: a11y_out,
+                    frame: frame_out,
+                    state: if want_state {
+                        obs.state
+                    } else {
+                        DeviceState::unknown(0)
+                    },
+                    events: vec![],
+                    ..Default::default()
+                }),
+            )?;
         }
 
         RequestPayload::Observe { since_seq, filter } => {
@@ -770,7 +900,12 @@ fn handle_connection(
         }
 
         RequestPayload::EndOfStream => {
-            write_reply(&mut sock, &ReplyPayload::EndOfStream { final_seq: next_obs_seq() - 1 })?;
+            write_reply(
+                &mut sock,
+                &ReplyPayload::EndOfStream {
+                    final_seq: next_obs_seq() - 1,
+                },
+            )?;
         }
     }
     eprintln!("[adk] connection closed");

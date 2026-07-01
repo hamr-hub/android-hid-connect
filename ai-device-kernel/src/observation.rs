@@ -19,8 +19,8 @@
 //! All types are `Serialize + Deserialize` so the wire layer (see
 //! [`crate::protocol`]) can use postcard without bespoke glue.
 
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::ids::{ActionId, PlanId};
 
@@ -347,8 +347,12 @@ mod tests {
     fn device_event_labels_are_distinct() {
         // Each variant maps to a unique kind label.
         let events = [
-            DeviceEvent::ActivityResumed { component: "x".into() },
-            DeviceEvent::ActivityPaused { component: "x".into() },
+            DeviceEvent::ActivityResumed {
+                component: "x".into(),
+            },
+            DeviceEvent::ActivityPaused {
+                component: "x".into(),
+            },
             DeviceEvent::WindowFocusChanged { window_id: 0 },
             DeviceEvent::PackageAdded { pkg: "x".into() },
             DeviceEvent::PackageRemoved { pkg: "x".into() },
@@ -370,11 +374,7 @@ mod tests {
         ];
         let labels: std::collections::HashSet<_> =
             events.iter().map(DeviceEvent::kind_label).collect();
-        assert_eq!(
-            labels.len(),
-            events.len(),
-            "duplicate event kind labels"
-        );
+        assert_eq!(labels.len(), events.len(), "duplicate event kind labels");
     }
 
     #[test]
@@ -424,14 +424,15 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(123),
             events: vec![
-                DeviceEvent::ActivityResumed { component: "com.foo/.Bar".into() },
+                DeviceEvent::ActivityResumed {
+                    component: "com.foo/.Bar".into(),
+                },
                 DeviceEvent::SceneChangeDetected { score: 0.9 },
             ],
             ..Default::default()
         };
         let bytes = postcard::to_allocvec(&obs).expect("encode observation");
-        let decoded: Observation =
-            postcard::from_bytes(&bytes).expect("decode observation");
+        let decoded: Observation = postcard::from_bytes(&bytes).expect("decode observation");
         assert_eq!(decoded, obs);
         assert_eq!(decoded.event_count(), 2);
     }

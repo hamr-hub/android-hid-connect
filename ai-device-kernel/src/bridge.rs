@@ -1,12 +1,12 @@
-//! `bridge` — the typed `Action` → byte-exact UHID execution path.
+//! `bridge` — the typed `Action` to byte-exact UHID execution path.
 //!
-//! `ai-device-kernel`'s typed [`Action`] surface (12 typed writes
-//! + 6 Phase 4/5 typed reads per v3 §3.6.3) terminates here:
-//! [`ActionInjector::apply`] is the single function that turns an
-//! [`Action`] into Android input by delegating to the byte-exact
+//! The kernel's typed `Action` surface (12 typed writes
+//! + 6 Phase 4/5 typed reads per v3 §3.6.3) terminates here.
+//! The single function `ActionInjector::apply` turns an
+//! `Action` into Android input by delegating to the byte-exact
 //! UHID drivers in `android-hid-connect`. No daemon, no shell, no
-//! `adb exec-out` — the kernel-internal intent→UHID hot path runs
-//! entirely in-process.
+//! `adb exec-out` — the kernel-internal intent to UHID hot path
+//! runs entirely in-process.
 //!
 //! ## Why this lives here (not in `android-hid-connect`)
 //!
@@ -155,7 +155,11 @@ impl<T: TransportWrite + Write> ActionInjector<T> {
         // *byte-level* execution path; the protocol layer is where
         // selectors / a11y / clipboard / launch are dispatched.
         match action {
-            Action::Tap { x, y, deadline_ms: _ } => return self.tap(id, start, *x, *y),
+            Action::Tap {
+                x,
+                y,
+                deadline_ms: _,
+            } => self.tap(id, start, *x, *y),
             Action::Swipe {
                 x1,
                 y1,
@@ -163,12 +167,19 @@ impl<T: TransportWrite + Write> ActionInjector<T> {
                 y2,
                 dur_ms,
                 deadline_ms: _,
-            } => return self.swipe(id, start, *x1, *y1, *x2, *y2, *dur_ms),
-            Action::TypeText { text, deadline_ms: _ } => return self.type_text(id, start, text),
-            Action::Key { code, deadline_ms: _ } => return self.press_key(id, start, *code),
-            Action::GamepadFrame { report, deadline_ms: _ } => {
-                return self.gamepad_frame(id, start, *report);
-            }
+            } => self.swipe(id, start, *x1, *y1, *x2, *y2, *dur_ms),
+            Action::TypeText {
+                text,
+                deadline_ms: _,
+            } => self.type_text(id, start, text),
+            Action::Key {
+                code,
+                deadline_ms: _,
+            } => self.press_key(id, start, *code),
+            Action::GamepadFrame {
+                report,
+                deadline_ms: _,
+            } => self.gamepad_frame(id, start, *report),
             Action::TapSelector { .. }
             | Action::Launch { .. }
             | Action::SetClipboard { .. }
@@ -179,14 +190,12 @@ impl<T: TransportWrite + Write> ActionInjector<T> {
             | Action::DetectElement { .. }
             | Action::Ground { .. }
             | Action::AskVisual { .. }
-            | Action::InjectRaw { .. } => {
-                return BridgeOutcome::rejected(
-                    id,
-                    AtomicErrorCode::NotImplemented,
-                    "action requires daemon-side resolver or custom wire path; \
-                     route via protocol::Frame::request",
-                );
-            }
+            | Action::InjectRaw { .. } => BridgeOutcome::rejected(
+                id,
+                AtomicErrorCode::NotImplemented,
+                "action requires daemon-side resolver or custom wire path; \
+                 route via protocol::Frame::request",
+            ),
         }
     }
 
@@ -257,6 +266,7 @@ impl<T: TransportWrite + Write> ActionInjector<T> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // 4 coords + duration + 2 internal plumbing args
     fn swipe(
         &mut self,
         id: ActionId,
@@ -305,22 +315,14 @@ impl<T: TransportWrite + Write> ActionInjector<T> {
                 .keyboard()
                 .inject_key(scancode, true, Modifiers::empty());
             if let Err(e) = r1 {
-                return BridgeOutcome::rejected(
-                    id,
-                    AtomicErrorCode::KernelError,
-                    e.to_string(),
-                );
+                return BridgeOutcome::rejected(id, AtomicErrorCode::KernelError, e.to_string());
             }
             let r2 = self
                 .session
                 .keyboard()
                 .inject_key(scancode, false, Modifiers::empty());
             if let Err(e) = r2 {
-                return BridgeOutcome::rejected(
-                    id,
-                    AtomicErrorCode::KernelError,
-                    e.to_string(),
-                );
+                return BridgeOutcome::rejected(id, AtomicErrorCode::KernelError, e.to_string());
             }
         }
         if let Err(e) = self.session.flush_now() {

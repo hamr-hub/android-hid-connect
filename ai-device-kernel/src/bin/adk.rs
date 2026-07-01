@@ -399,6 +399,7 @@ fn execute_action(
                     landed: false,
                     ground_truth: GroundTruth::default(),
                     elapsed_ms: start.elapsed().as_millis() as u32,
+                    ..Default::default()
                 };
             }
             let cmd = format!("input text {text}");
@@ -494,6 +495,7 @@ fn execute_action(
             landed,
             ground_truth: ground_truth.clone(),
             elapsed_ms,
+            ..Default::default()
         });
     }
     let _ = ground_truth.events; // keep import live for future event push
@@ -503,6 +505,7 @@ fn execute_action(
         landed,
         ground_truth,
         elapsed_ms,
+        ..Default::default()
     }
 }
 
@@ -610,6 +613,7 @@ fn build_observation(flags: &Flags, shared: &Arc<SharedState>) -> Observation {
         read_png_dimensions(&b).map(|(w, h)| FrameSnapshot {
             width: w, height: h, codec: 1,
             is_keyframe: true, pts: seq, scene_change_score: 0.0,
+            ..Default::default()
         })
     });
     let a11y = Some(A11yTree {
@@ -626,6 +630,7 @@ fn build_observation(flags: &Flags, shared: &Arc<SharedState>) -> Observation {
         frame,
         state: state_struct,
         events: vec![DeviceEvent::Uptime { uptime_ms: shared.uptime_ms() }],
+        foreground_app: None,
     };
     // Push through the StreamEngine (multi-subscriber fan-out).
     let mut s = shared.stream.lock().unwrap();
@@ -756,6 +761,7 @@ fn handle_connection(
                 frame: frame_out,
                 state: if want_state { obs.state } else { DeviceState::unknown(0) },
                 events: vec![],
+                ..Default::default()
             }))?;
         }
 

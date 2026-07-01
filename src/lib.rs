@@ -47,7 +47,6 @@
 #![deny(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
-pub mod agent;
 pub mod ai;
 #[cfg(feature = "tokio")]
 pub mod async_device;
@@ -63,12 +62,6 @@ pub mod session;
 pub mod transport;
 pub mod types;
 
-pub use agent::{
-    AgentAction, AgentControlCloseReport, AgentControlClosed, AgentControlCommandCloseReport,
-    AgentControlSession, AgentObjectSelector, AgentPlanBoundedPrefix, AgentPlanBoundedPrefixStop,
-    AgentPlanSummary, AgentPoint, AgentRect, AgentScrollFrame, AgentTargetSelector,
-    AgentTouchFrame, DEFAULT_AGENT_COMMAND_BOUND,
-};
 #[cfg(feature = "tokio")]
 pub use async_device::{
     read_device_event_async, read_device_message_async, read_scrcpy_control_prefix_async,

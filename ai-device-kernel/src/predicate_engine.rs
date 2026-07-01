@@ -265,9 +265,8 @@ fn observation_has_a11y_idle_event(obs: &Observation, duration_ms: u32, timeout_
 }
 
 /// Stub for SelectorMatches: matches if the a11y JSON contains
-/// the selector string as a substring. A real impl delegates to
-/// `android-hid-agent::selectors::Selector` — wiring that lands
-/// when the binary ships.
+/// the selector string as a substring. A full impl lands when
+/// the on-device binary ships — see ADR-0012.
 fn observation_selector_matches(obs: &Observation, selector: &str) -> bool {
     let Some(a11y) = &obs.a11y else { return false };
     a11y.json.contains(selector)
@@ -297,6 +296,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -308,6 +308,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![ev],
+            foreground_app: None,
         }
     }
 
@@ -518,6 +519,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![DeviceEvent::SceneChangeDetected { score: 0.5 }],
+            foreground_app: None,
         };
         let results = engine.on_observation(&obs);
         assert_eq!(results.len(), 3);
@@ -578,8 +580,8 @@ mod tests {
     fn selectors_substring_stub_works() {
         // SelectorMatches has a stub implementation that
         // matches on substring presence in the a11y JSON. The
-        // real impl delegates to `android-hid-agent::selectors`;
-        // that wires up in Phase 6 (binary).
+        // real impl lands in the on-device binary — see
+        // ADR-0012.
         let mut engine = PredicateEngine::new();
         let _ = engine.register(Predicate::SelectorMatches {
             selector: "login".into(),

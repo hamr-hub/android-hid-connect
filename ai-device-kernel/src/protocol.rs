@@ -597,6 +597,7 @@ mod tests {
                 landed: true,
                 ground_truth: crate::action::GroundTruth::default(),
                 elapsed_ms: 0,
+                ..Default::default()
             })
             .verb(),
             Verb::Action
@@ -608,6 +609,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         };
         assert_eq!(ReplyPayload::Observation(obs.clone()).verb(), Verb::Observe);
         assert_eq!(ReplyPayload::Query(obs.clone()).verb(), Verb::Query);

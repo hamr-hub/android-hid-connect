@@ -322,6 +322,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(seq * 10),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -337,6 +338,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(seq * 10),
             events: vec![ev],
+            foreground_app: None,
         }
     }
 
@@ -521,9 +523,11 @@ mod tests {
                 is_keyframe: true,
                 pts: 90000,
                 scene_change_score: 0.5,
+                ..Default::default()
             }),
             state: DeviceState::unknown(0),
             events: vec![],
+            ..Default::default()
         });
         let obs = engine.subscriber_mut(h).unwrap().poll().expect("got frame obs");
         let frame = obs.frame.expect("frame snapshot preserved");

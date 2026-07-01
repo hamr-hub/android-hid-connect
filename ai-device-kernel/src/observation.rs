@@ -20,6 +20,7 @@
 //! [`crate::protocol`]) can use postcard without bespoke glue.
 
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 
 use crate::ids::{ActionId, PlanId};
 
@@ -27,7 +28,7 @@ use crate::ids::{ActionId, PlanId};
 ///
 /// `seq` is strictly monotonic; `observe(since_seq=N)` returns all
 /// observations with `seq > N` in causal order.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Observation {
     /// Monotonic sequence number. Strictly increasing across the
     /// daemon's lifetime; clients use it to fetch
@@ -47,6 +48,26 @@ pub struct Observation {
     /// Events that fired since the previous observation (or since
     /// subscription start, for the first frame).
     pub events: Vec<DeviceEvent>,
+    /// Foreground app at observation time. Single source of truth
+    /// for "what app am I acting on" (ADR-0005 / ADR-0014).
+    /// Optional because pre-v3.4 observation snapshots may not
+    /// have carried this field.
+    #[serde(default)]
+    pub foreground_app: Option<ForegroundApp>,
+}
+
+impl Default for Observation {
+    fn default() -> Self {
+        Self {
+            seq: 0,
+            timestamp_ms: 0,
+            a11y: None,
+            frame: None,
+            state: DeviceState::unknown(0),
+            events: vec![],
+            foreground_app: None,
+        }
+    }
 }
 
 impl Observation {
@@ -70,7 +91,7 @@ impl Observation {
 /// A11y tree snapshot. The kernel records both the JSON-equivalent
 /// shape (for LLM-friendly prompts) and the typed children for fast
 /// selector resolution on subsequent actions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct A11yTree {
     /// Active window id (matches `DeviceEvent::WindowFocusChanged`).
     pub window_id: Option<u32>,
@@ -78,17 +99,18 @@ pub struct A11yTree {
     pub top_activity: Option<String>,
     /// Number of nodes in the tree (cheap for size budgeting).
     pub node_count: u32,
-    /// JSON-equivalent blob of the tree (matches
-    /// `android-hid-daemon`'s `dump_active` output; lets LLM agents
-    /// reuse handsets-compatible parsers).
+    /// JSON-equivalent blob of the tree (matches the
+    /// `dump_active` output format; lets LLM agents reuse
+    /// handsets-compatible parsers).
     pub json: String,
 }
 
 /// One frame snapshot for the LLM-vision path.
 ///
 /// Note: `Eq` is *not* derived because `scene_change_score` is an
-/// `f32` and `Eq` isn't implemented for floats.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// `f32` and `Eq` isn't implemented for floats. `Copy` is not
+/// derived either (since `png: Option<Vec<u8>>` is owned data).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FrameSnapshot {
     /// Frame width in pixels.
     pub width: u16,
@@ -102,11 +124,32 @@ pub struct FrameSnapshot {
     pub pts: u64,
     /// Best-effort scene-change score [0, 1] (server-computed).
     pub scene_change_score: f32,
+    /// Raw PNG bytes (postcard: `Vec<u8>`; JSON: base64 or
+    /// `bytes` array — both serialise losslessly). Optional
+    /// because the kernel-internal hot path (per Phase 6.5 0.78ms
+    /// p50) doesn't carry PNG — only LLM-vision observations
+    /// populate this. See ADR-0014 / grill Q9.
+    #[serde(default)]
+    pub png: Option<Vec<u8>>,
+}
+
+impl Default for FrameSnapshot {
+    fn default() -> Self {
+        Self {
+            width: 0,
+            height: 0,
+            codec: 0,
+            is_keyframe: false,
+            pts: 0,
+            scene_change_score: 0.0,
+            png: None,
+        }
+    }
 }
 
 /// Current device state bits — cheap to copy, snapshotted on every
 /// observation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeviceState {
     /// Foreground window id (`0` if unknown).
     pub focused_window: u32,
@@ -132,6 +175,37 @@ impl DeviceState {
     }
 }
 
+/// Foreground application identity — see ADR-0014 / grill ADR-0005
+/// (Hybrid multi-app orchestration).
+///
+/// Single source of truth for "what app am I acting on". Returned by
+/// `app_switch` (the cross-app atomic, per ADR 0005) and by every
+/// `Observation` snapshot. **No per-intent `app=` field exists** —
+/// every Intent inherits the current foreground.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct ForegroundApp {
+    /// Package name (`com.example`).
+    pub package: String,
+    /// Activity name within the package (`.MainActivity` or full
+    /// `com.example/.MainActivity` — depends on the source).
+    pub activity: String,
+    /// Is this app currently in the foreground? (false during
+    /// transitions, true once focus is settled).
+    pub focused: bool,
+    /// Wall-clock ms since the daemon observed this app enter the
+    /// foreground. Used by the LLM to detect app-switch latency
+    /// (PRD-A AC-3).
+    pub since_ms: u64,
+}
+
+impl ForegroundApp {
+    /// Convenience — `com.example/.MainActivity` style.
+    #[must_use]
+    pub fn component(&self) -> String {
+        format!("{}/{}", self.package, self.activity)
+    }
+}
+
 /// Device-event taxonomy — v3 §3.2.3 lists 10 variants. We map them
 /// 1:1 to `DeviceEvent` so agent-side filters can subscribe by
 /// `EventKind` bitfield.
@@ -140,7 +214,7 @@ impl DeviceState {
 /// carry `f32` payloads (e.g. `SceneChangeDetected { score }`)
 /// which don't implement `Eq`/`Hash`. Use [`Self::kind_label`] for
 /// map-keys on the agent side instead.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum DeviceEvent {
     /// Activity resumed (foreground navigation target).
     ActivityResumed {
@@ -244,6 +318,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            ..Default::default()
         };
         assert!(obs.is_header_only());
         assert_eq!(obs.event_count(), 0);
@@ -263,6 +338,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            ..Default::default()
         };
         assert!(!obs.is_header_only());
     }
@@ -324,6 +400,7 @@ mod tests {
             is_keyframe: true,
             pts: 90_000,
             scene_change_score: 0.42,
+            ..Default::default()
         };
         let bytes = postcard::to_allocvec(&f).expect("encode frame");
         // Worst case: 2 + 2 + 1 + 1 + varint(pts) + 4 (f32)
@@ -350,6 +427,7 @@ mod tests {
                 DeviceEvent::ActivityResumed { component: "com.foo/.Bar".into() },
                 DeviceEvent::SceneChangeDetected { score: 0.9 },
             ],
+            ..Default::default()
         };
         let bytes = postcard::to_allocvec(&obs).expect("encode observation");
         let decoded: Observation =

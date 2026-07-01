@@ -27,6 +27,7 @@ fn obs_with_activity(seq: u64, component: &str) -> Observation {
         frame: None,
         state: DeviceState::unknown(0),
         events: vec![],
+        foreground_app: None,
     }
 }
 
@@ -115,6 +116,7 @@ fn plan_executor_with_predicate_engine_and_memory_smoke() {
                 landed: true,
                 ground_truth: Default::default(),
                 elapsed_ms: 1,
+                ..Default::default()
             };
             action_cursor += 1;
             Ok(r)

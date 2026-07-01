@@ -144,6 +144,7 @@ where
         frame: None,
         state: DeviceState::unknown(0),
         events: vec![],
+        ..Default::default()
     };
     let checkpoint_every = plan.checkpoint_every;
     let abort_on_error = plan.abort_on_error;
@@ -193,6 +194,7 @@ where
                         landed: false,
                         ground_truth: GroundTruth::default(),
                         elapsed_ms: 0,
+                        ..Default::default()
                     },
                     landed: false,
                     error: Some(reason),
@@ -351,6 +353,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -367,6 +370,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -376,6 +380,7 @@ mod tests {
             landed: true,
             ground_truth: GroundTruth::default(),
             elapsed_ms: 1,
+            ..Default::default()
         }
     }
 
@@ -713,6 +718,7 @@ mod tests {
                         events: vec![],
                     },
                     elapsed_ms: 1,
+                    ..Default::default()
                 })
             },
             || {

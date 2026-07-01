@@ -25,11 +25,28 @@ use serde::{Deserialize, Serialize};
 use crate::action::{Action, ActionResult};
 use crate::ids::{PlanId, StepId};
 use crate::observation::Observation;
+use schemars::JsonSchema;
+use semver::Version;
+
 use crate::predicate::Predicate;
 
+/// Wire-format version constant for [`Plan::version`].
+pub const PLAN_VERSION: &str = "0.1.0";
+
 /// Typed multi-action plan — v3 §3.2.2.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Plan {
+    /// Wire-format version of the `Plan` schema. ADR-0012: gates
+    /// `AtomicErrorCode` additions (per ADR-0013) and JSON-side
+    /// field evolution. Defaults to `"0.1.0"`. The daemon refuses
+    /// any `Plan` whose `version` is outside the supported range.
+    ///
+    /// Stored as `String` on the wire (postcard + JSON both)
+    /// because `semver::Version` does not implement `JsonSchema`
+    /// (orphan rule). Use [`Plan::version_parsed`] for the
+    /// strongly-typed `Version`.
+    #[serde(default = "default_plan_version_str")]
+    pub version: String,
     /// Server-assigned plan ID (filled in by the daemon; ignored
     /// on the wire from the host side).
     pub id: PlanId,
@@ -45,15 +62,24 @@ pub struct Plan {
 
 impl Plan {
     /// New empty plan with default flags (abort_on_error = true,
-    /// checkpoint_every = 0).
+    /// checkpoint_every = 0, version = "0.1.0").
     #[must_use]
     pub fn new(steps: Vec<PlanStep>) -> Self {
         Self {
+            version: default_plan_version_str(),
             id: PlanId::ZERO,
             steps,
             abort_on_error: true,
             checkpoint_every: 0,
         }
+    }
+
+    /// Parse [`Self::version`] as a `semver::Version`. Returns
+    /// `None` if the string is not a valid semver (the daemon
+    /// treats this as a wire-protocol violation).
+    #[must_use]
+    pub fn version_parsed(&self) -> Option<Version> {
+        Version::parse(&self.version).ok()
     }
 
     /// Set `abort_on_error`. Builder-style.
@@ -85,8 +111,13 @@ impl Plan {
     }
 }
 
+/// Default wire-format version for [`Plan::version`].
+fn default_plan_version_str() -> String {
+    PLAN_VERSION.to_string()
+}
+
 /// One step within a [`Plan`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PlanStep {
     /// Server-assigned step index (filled in by the daemon).
     pub id: StepId,
@@ -140,7 +171,7 @@ impl PlanStep {
 }
 
 /// Result of a [`Plan`] execution — returned in 1 frame (v3 §3.2.2).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PlanResult {
     /// Plan ID echoed back.
     pub plan_id: PlanId,
@@ -164,7 +195,7 @@ impl PlanResult {
 }
 
 /// Per-step result within a [`PlanResult`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StepResult {
     /// Step ID echoed back.
     pub step_id: StepId,
@@ -259,6 +290,7 @@ mod tests {
                 landed: true,
                 ground_truth: GroundTruth::default(),
                 elapsed_ms: 1,
+                ..Default::default()
             },
             landed: true,
             error: None,
@@ -273,6 +305,7 @@ mod tests {
                 landed: true,
                 ground_truth: GroundTruth::default(),
                 elapsed_ms: 1,
+                ..Default::default()
             },
             landed: true,
             error: Some("verify timeout".into()),
@@ -290,6 +323,7 @@ mod tests {
                 landed: false,
                 ground_truth: GroundTruth::default(),
                 elapsed_ms: 1,
+                ..Default::default()
             },
             landed: true,
             error: None,
@@ -309,6 +343,7 @@ mod tests {
                     landed: true,
                     ground_truth: GroundTruth::default(),
                     elapsed_ms: 1,
+                    ..Default::default()
                 },
                 landed: true,
                 error: None,
@@ -321,6 +356,7 @@ mod tests {
                     landed: false,
                     ground_truth: GroundTruth::default(),
                     elapsed_ms: 1,
+                    ..Default::default()
                 },
                 landed: false,
                 error: Some("action refused".into()),
@@ -336,6 +372,7 @@ mod tests {
                     landed: false,
                     ground_truth: GroundTruth::default(),
                     elapsed_ms: 0,
+                    ..Default::default()
                 },
                 landed: false,
                 error: Some("skipped (plan aborted)".into()),
@@ -351,6 +388,7 @@ mod tests {
                 frame: None,
                 state: DeviceState::unknown(0),
                 events: vec![],
+                ..Default::default()
             },
             total_elapsed_ms: 5,
             all_landed: false,
@@ -387,6 +425,7 @@ mod tests {
                     is_keyframe: true,
                     pts: 90000,
                     scene_change_score: 0.0,
+                    ..Default::default()
                 }),
                 state: DeviceState::unknown(12),
                 events: vec![DeviceEvent::ActionCompleted {
@@ -394,6 +433,7 @@ mod tests {
                     landed: true,
                     elapsed_ms: 5,
                 }],
+                ..Default::default()
             },
             total_elapsed_ms: 5,
             all_landed: true,

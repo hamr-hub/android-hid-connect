@@ -125,6 +125,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -136,6 +137,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![ev],
+            foreground_app: None,
         }
     }
 

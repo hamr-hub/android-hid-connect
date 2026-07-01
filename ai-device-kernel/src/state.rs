@@ -195,6 +195,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(seq * 10),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -206,6 +207,7 @@ mod tests {
                 landed: true,
                 ground_truth: GroundTruth::default(),
                 elapsed_ms: 1,
+                ..Default::default()
             },
         )
     }

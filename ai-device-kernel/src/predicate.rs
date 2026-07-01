@@ -19,6 +19,11 @@
 //!   v3 §3.2.4 "0 polling, 0 CPU 浪费 (P4 间接解)".
 
 use serde::{Deserialize, Serialize};
+use schemars::{
+    gen::SchemaGenerator,
+    schema::Schema,
+    JsonSchema,
+};
 
 use crate::observation::DeviceEvent;
 
@@ -31,10 +36,22 @@ use crate::observation::DeviceEvent;
 #[serde(transparent)]
 pub struct PredicateHandle(pub u64);
 
+/// Hand-rolled `JsonSchema` so the wire-side schema is named
+/// `"PredicateHandle"` (not the auto-derived `"uint64"`). Matches
+/// the ADR-0012 ID schema convention.
+impl JsonSchema for PredicateHandle {
+    fn schema_name() -> String {
+        "PredicateHandle".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        schemars::schema_for!(u64).schema.into()
+    }
+}
+
 /// Predicate taxonomy — v3 §3.2.4 (6 variants). Each predicate
 /// carries a `timeout_ms` (the deadline after which the predicate
 /// engine gives up and returns `PredicateResult::Timeout`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum Predicate {
     /// Wait until `text` appears in any a11y node's text content.
     TextAppears {
@@ -73,8 +90,7 @@ pub enum Predicate {
     /// `selector` is a handsets-style CSS-like selector string.
     SelectorMatches {
         /// Selector string (delegated to the kernel's
-        /// selector engine, which is compatible with the
-        /// `android-hid-agent::Selector` parser).
+        /// selector engine).
         selector: String,
         /// Backstop deadline in ms.
         timeout_ms: u32,
@@ -120,7 +136,7 @@ impl Predicate {
 
 /// Subset of `DeviceEvent` that can be used as a predicate trigger
 /// (`EventFires`). Mirrors the v3 design's `EventKind` filter set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum EventKind {
     ActivityResumed,
     ActivityPaused,

@@ -20,6 +20,7 @@
 //! §3.2.4 (PredicateId) for the design intent.
 
 use serde::{Deserialize, Serialize};
+use schemars::{gen::SchemaGenerator, schema::Schema, JsonSchema};
 
 /// Server-assigned action ID. u64 → 8 bytes on the wire, monotonic
 /// across the daemon lifetime. Used for idempotent retry: a replayed
@@ -269,6 +270,66 @@ impl ScreenId {
 impl std::fmt::Display for ScreenId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.hex())
+    }
+}
+
+// --- JsonSchema impls for the IDs (ADR-0012 / PRD-A AC-5) --------------
+//
+// Schemars 0.8 derive doesn't see our manual Serialize/Deserialize impls
+// (it looks for `JsonSchema` on the type), so we hand-roll small integer
+// schemas. These match the postcard wire layout: u64 / u32 / `[u8; 16]`.
+//
+// Note: `semver::Version` would be a natural target for a hand-rolled
+// schema, but the orphan rule prevents `impl JsonSchema for Version`
+// in this crate. `Plan::version` therefore lives as `String` on the
+// wire; callers parse via `Plan::version_parsed()`.
+
+/// Public so external crates (tests, downstream consumers) can
+/// introspect / validate the wire-side ID schema. See ADR-0012.
+/// Public so external crates (tests, downstream consumers) can
+/// introspect / validate the wire-side ID schema. See ADR-0012.
+impl JsonSchema for ActionId {
+    fn schema_name() -> String {
+        "ActionId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        schemars::schema_for!(u64).schema.into()
+    }
+}
+
+impl JsonSchema for PlanId {
+    fn schema_name() -> String {
+        "PlanId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        schemars::schema_for!(u64).schema.into()
+    }
+}
+
+impl JsonSchema for StepId {
+    fn schema_name() -> String {
+        "StepId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        schemars::schema_for!(u32).schema.into()
+    }
+}
+
+impl JsonSchema for ScreenId {
+    fn schema_name() -> String {
+        "ScreenId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        // 16 raw bytes encoded as `hex` string on the JSON side
+        // (matches `ScreenId::Display`). The LLM never sees bytes
+        // directly; hex is more grep-friendly in fixtures.
+        use schemars::schema::InstanceType;
+        let obj = schemars::schema::SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            format: Some("^[0-9a-f]{32}$".to_string()),
+            ..Default::default()
+        };
+        Schema::Object(obj)
     }
 }
 

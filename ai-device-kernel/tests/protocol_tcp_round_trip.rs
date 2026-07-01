@@ -122,6 +122,7 @@ fn action_request_round_trips_over_loopback_tcp() {
                     landed,
                     ground_truth: GroundTruth::default(),
                     elapsed_ms: 1,
+                    ..Default::default()
                 })
             }
             other => panic!("unexpected request shape: {other:?}"),
@@ -166,6 +167,7 @@ fn query_request_round_trips_over_loopback_tcp() {
                 frame: None,
                 state: DeviceState::unknown(100),
                 events: vec![],
+                foreground_app: None,
             }),
             other => panic!("unexpected: {other:?}"),
         }
@@ -209,6 +211,7 @@ fn plan_request_round_trips_over_loopback_tcp() {
                             landed: true,
                             ground_truth: GroundTruth::default(),
                             elapsed_ms: 1,
+                            ..Default::default()
                         },
                         landed: true,
                         error: None,
@@ -220,6 +223,7 @@ fn plan_request_round_trips_over_loopback_tcp() {
                         frame: None,
                         state: DeviceState::unknown(0),
                         events: vec![],
+                        foreground_app: None,
                     },
                     total_elapsed_ms: 1,
                     all_landed: true,
@@ -361,6 +365,7 @@ fn large_payload_framing_survives_fragmentation() {
                 frame: None,
                 state: DeviceState::unknown(0),
                 events: vec![],
+                foreground_app: None,
             }),
             // The Action-with-4KiB-selector case sends an Action
             // reply; we synthesise one here.
@@ -369,6 +374,7 @@ fn large_payload_framing_survives_fragmentation() {
                 landed: true,
                 ground_truth: GroundTruth::default(),
                 elapsed_ms: 1,
+                ..Default::default()
             }),
             _ => ReplyPayload::EndOfStream { final_seq: 0 },
         }

@@ -1,13 +1,13 @@
 //! Capability registry — see v3 §3.5.
 //!
-//! The legacy `android-hid-daemon` exposes 70+ wire verbs. The AI
-//! Device Kernel **internalises** those verbs as typed
-//! [`Capability`] implementations; the agent only ever sees
-//! the 12 typed [`Action`](crate::action::Action) variants. This
-//! crate doesn't ship the actual capability implementations
-//! (those live on the device), but it provides the registration
-//! surface plus a typed mapping from `Action` → `Capability` name
-//! list (already declared on `Action::capabilities()`).
+//! The AI Device Kernel **internalises** the legacy wire-verb
+//! surface as typed [`Capability`] implementations; the agent only
+//! ever sees the 12 typed [`Action`](crate::action::Action)
+//! variants. This crate doesn't ship the actual capability
+//! implementations (those live on the device behind the
+//! `adk` binary), but it provides the registration surface plus
+//! a typed mapping from `Action` → `Capability` name list
+//! (already declared on `Action::capabilities()`).
 //!
 //! ## Why this layer exists
 //!
@@ -60,9 +60,9 @@ pub enum CapabilityError {
 }
 
 /// Opaque execution context for a capability. Concrete shape is
-/// supplied by the daemon (it owns I/O); this crate only exposes
-/// the trait. The device-side crate (currently `android-hid-daemon`)
-/// provides the executable `CapabilityContext`.
+/// supplied by the `adk` binary (it owns I/O); this crate only
+/// exposes the trait. The on-device kernel binary provides the
+/// executable `CapabilityContext`.
 pub trait CapabilityContext {
     /// Server-measured elapsed-time accessor (for grounded timing).
     fn elapsed_ms(&self) -> u32;

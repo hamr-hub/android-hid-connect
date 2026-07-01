@@ -25,11 +25,11 @@
 //!
 //! ## Persistence
 //!
-//! AC-V3-3.6 says "Memory 落盘 SQLite, 重启 daemon 不丢失".
+//! AC-V3-3.6 says "Memory 落盘 SQLite, 重启 kernel 不丢失".
 //! Phase 3 lands the in-memory cache. SQLite persistence
 //! ships in Phase 3.x because the dep (`rusqlite`) lands in
-//! a follow-up commit alongside the existing workspace's
-//! `android-hid-daemon` SQLite usage.
+//! a follow-up commit alongside the existing kernel's
+//! memory_sqlite backend.
 //!
 //! ## Threading
 //!

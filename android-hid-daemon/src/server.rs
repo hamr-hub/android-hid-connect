@@ -285,6 +285,9 @@ impl Server {
         handlers.insert(Verb::WmInfo, Arc::new(default_wm_info));
         handlers.insert(Verb::Getprop, Arc::new(default_getprop));
         handlers.insert(Verb::Quit, Arc::new(default_quit));
+        handlers.insert(Verb::Tap, Arc::new(crate::handlers::tap));
+        handlers.insert(Verb::Screenshot, Arc::new(crate::handlers::screenshot));
+        handlers.insert(Verb::Shell, Arc::new(crate::handlers::shell));
 
         let listener = TcpListener::bind(config.bind_addr).map_err(BindError::Listener)?;
         // Non-blocking so the accept loop can poll the `stop` flag

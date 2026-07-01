@@ -54,7 +54,7 @@ pub mod wm;
 // `app_process`-hosted Android entry point all reach for the dispatcher
 // through these names rather than the module path so the internal
 // layout can churn without breaking external consumers.
-pub use handlers::{getprop, info, ping, quit, wm_info};
+pub use handlers::{getprop, info, ping, quit, screenshot, shell, tap, wm_info};
 pub use server::{BindError, HandlerFn, Response, Server, ServerConfig, HANDSHAKE};
 
 /// Wire-protocol version this daemon build speaks.

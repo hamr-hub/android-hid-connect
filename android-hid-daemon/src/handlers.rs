@@ -161,6 +161,79 @@ impl StdError for GetpropError {
 }
 
 // ---------------------------------------------------------------------------
+// Input handlers (tap, swipe, screenshot, shell) — via Android shell
+// ---------------------------------------------------------------------------
+
+/// `tap x=<X> y=<Y>` -> `input tap X Y` on device.
+pub fn tap(args: &[u8]) -> Result<Response, Box<dyn StdError + Send + Sync>> {
+    let text = std::str::from_utf8(args).unwrap_or("");
+    let (_, tail) = split_head(text);
+    let pairs = android_hid_protocol::parse_kv(tail);
+    let mut x: i32 = -1;
+    let mut y: i32 = -1;
+    for (k, v) in pairs {
+        match k.as_ref() {
+            "x" => x = v.parse().unwrap_or(-1),
+            "y" => y = v.parse().unwrap_or(-1),
+            _ => {}
+        }
+    }
+    if x < 0 || y < 0 {
+        return Ok(Response::One(Frame::from_static(b"ERR:BAD_ARG:tap-needs-x-y")));
+    }
+    let cmd = format!("input tap {} {}", x, y);
+    let out = std::process::Command::new("sh")
+        .args(["-c", &cmd])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => Ok(Response::One(Frame::from_static(b"ok"))),
+        Ok(o) => Ok(Response::One(Frame::new(
+            format!("ERR:EXEC:tap-failed:{}", String::from_utf8_lossy(&o.stderr)).into_bytes(),
+        ))),
+        Err(e) => Ok(Response::One(Frame::new(
+            format!("ERR:EXEC:tap-spawn:{e}").into_bytes(),
+        ))),
+    }
+}
+
+/// `screenshot` -> raw PNG bytes from `screencap -p`.
+pub fn screenshot(_args: &[u8]) -> Result<Response, Box<dyn StdError + Send + Sync>> {
+    let out = std::process::Command::new("screencap")
+        .arg("-p")
+        .output();
+    match out {
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => {
+            Ok(Response::One(Frame::new(o.stdout)))
+        }
+        Ok(o) => Ok(Response::One(Frame::new(
+            format!("ERR:EXEC:screenshot-failed:{}", o.status).into_bytes(),
+        ))),
+        Err(e) => Ok(Response::One(Frame::new(
+            format!("ERR:EXEC:screenshot-spawn:{e}").into_bytes(),
+        ))),
+    }
+}
+
+/// `shell <cmd>` -> raw stdout from the shell command.
+pub fn shell(args: &[u8]) -> Result<Response, Box<dyn StdError + Send + Sync>> {
+    let text = std::str::from_utf8(args).unwrap_or("");
+    let (_, tail) = split_head(text);
+    let cmd = tail.trim();
+    if cmd.is_empty() {
+        return Ok(Response::One(Frame::from_static(b"ERR:BAD_ARG:shell-needs-cmd")));
+    }
+    let out = std::process::Command::new("sh")
+        .args(["-c", cmd])
+        .output();
+    match out {
+        Ok(o) => Ok(Response::One(Frame::new(o.stdout))),
+        Err(e) => Ok(Response::One(Frame::new(
+            format!("ERR:EXEC:shell-spawn:{e}").into_bytes(),
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

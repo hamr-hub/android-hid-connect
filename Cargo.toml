@@ -24,7 +24,7 @@ criterion = { version = "0.8", default-features = false }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 blake3 = { version = "1", default-features = false }
-rusqlite = { version = "0.31", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 
 [workspace.lints.rust]
 rust_2018_idioms = { level = "warn", priority = -1 }

@@ -55,14 +55,19 @@
 pub mod action;
 pub mod bridge;
 pub mod capability;
+pub mod chunk_planner;
+pub mod cloud_llm;
+pub mod cold_start;
 pub mod egress;
 pub mod ids;
 pub mod json;
+pub mod llm_deployment;
 pub mod memory;
 #[cfg(feature = "sqlite")]
 pub mod memory_sqlite;
 pub mod mock_llm;
 pub mod observation;
+pub mod on_device_llm;
 pub mod plan;
 pub mod plan_executor;
 pub mod predicate;
@@ -70,10 +75,9 @@ pub mod predicate_engine;
 pub mod predicate_wait;
 pub mod protocol;
 pub mod scenario_library;
+pub mod selector_cache;
 pub mod session_state;
 pub mod state;
-pub mod chunk_planner;
-pub mod selector_cache;
 pub mod stream_engine;
 pub mod ui_repr;
 

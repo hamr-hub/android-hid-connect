@@ -1,8 +1,22 @@
 # android-hid-connect
 
-A pure-Rust port of [scrcpy][scrcpy]'s UHID control surface — drive a
-connected Android device by emitting USB HID reports over scrcpy-server's
-control socket.
+**AI middleware for controlling Android devices.**
+
+The workspace is a 3-crate Rust project centered on
+[`ai-device-kernel`](/ai-device-kernel/) — the AI middleware that
+turns an LLM's typed `Action` into real Android input via the
+byte-exact [scrcpy][scrcpy] UHID control surface (this crate).
+
+Per [ADR-0015](docs/adr/0015-ai-middleware-consolidation.md) (2026-07-01),
+the workspace is consolidated:
+
+- `android-hid-connect` (this crate) — byte-exact scrcpy UHID core (library)
+- [`android-hid-protocol`](/android-hid-protocol/) — zero-dep wire types
+- [`ai-device-kernel`](/ai-device-kernel/) — THE AI middleware (1 binary `adk`, 1 port 9008, 1 protocol, 1 typed `Action`)
+
+The previous 7-crate workspace (which included `android-hid-daemon`,
+`android-hid-agent`, `android-hid-cli`, `android-hid-py`, and the
+root crate's `src/agent/` facade) was retired — see ADR-0015.
 
 [scrcpy]: https://github.com/Genymobile/scrcpy
 
@@ -20,8 +34,7 @@ control socket.
 | [`docs/scrcpy-protocol-compatibility.md`](docs/scrcpy-protocol-compatibility.md) | scrcpy v2.7 byte-exact 契约 + 跟踪流程 |
 | [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) | LLM / agent runtime 集成指南 |
 | [`docs/development.md`](docs/development.md) | 本地开发循环 + 真机 E2E + CI 矩阵 |
-| [`docs/comparison-with-handsets.md`](docs/comparison-with-handsets.md) | 与 `handsets` 仓库的多维度对比 |
-| [`docs/roadmap-exceed-handsets.md`](docs/roadmap-exceed-handsets.md) | 7-phase 实施路线图 + workspace 布局 + 能力矩阵 |
+| [`docs/adr/0015-ai-middleware-consolidation.md`](docs/adr/0015-ai-middleware-consolidation.md) | 2026-07-01 工作区合并决策 |
 
 第一次接触本 crate:先读本文件 → 然后 [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) 或 [`docs/architecture.md`](docs/architecture.md)。
 

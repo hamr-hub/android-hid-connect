@@ -12,21 +12,43 @@
 
 ### Added
 
-- `AGENTS.md` — 协作约定(目录规则 + 允许/禁止 + AI agent meta-rule)
-- `docs/INDEX.md` — 全部专题文档导航
-- `docs/architecture.md` — 模块分层 + 线程模型 + 扩展点
-- `docs/wire-format.md` — 22 control_msg + 3 HID report + 3 device_msg 字节级速查
-- `docs/scrcpy-protocol-compatibility.md` — scrcpy v2.7 byte-exact 契约 + 跟踪流程
-- `docs/ai-agent-integration.md` — LLM agent 集成指南(observe-plan-act 循环、typed plan、感知 API)
-- `docs/development.md` — 本地开发循环 + 真机 E2E + CI 矩阵
-- `docs/roadmap-exceed-handsets.md` — 7-phase 实施路线图(workspace 布局 + 能力矩阵)
-- 5 个 sibling crate skeleton:`android-hid-protocol`(verb / error / frame / k=v / version)、`android-hid-daemon`(on-device 库)、`android-hid-agent`(host facade)、`android-hid-cli`(`ah` binary)、`android-hid-py`(`cdylib` 占位)
-- Workspace-level shared `[profile.release]`(opt-level = "z", lto = "fat", panic = "abort", strip) — 镜像 `handsets-cli` 让 `ah` 出小尺寸静态二进制
-- Workspace-level lint 集合:各 sibling crate `unsafe_code = "forbid"` + `rust_2018_idioms` warn;root crate 保持现状(几处 `unsafe` 是 byte-exact 兼容垫片)
-- `docs/INDEX.md` "阅读路径 D — Rust 替代 handsets" 段,指向 roadmap
-- `README.md` Documentation 段加入 `docs/roadmap-exceed-handsets.md` 条目
+- `ai-device-kernel/src/bridge.rs` — typed `Action` → byte-exact UHID execution path (`ActionInjector::apply`)
+- `ai-device-kernel/src/bin/adk-bench.rs` — in-process micro-bench (CI gate, p99 < 5 ms)
+- `docs/adr/0015-ai-middleware-consolidation.md` — 2026-07-01 workspace consolidation decision
 
 ### Changed
+
+- **AI middleware consolidation (ADR-0015)** — workspace reduced from 7 crates to 3 crates + 1 binary. `ai-device-kernel` is THE AI façade (single binary `adk`, single port 9008, single protocol postcard/4-verb). Root crate `Cargo.toml` description rewritten to reflect AI middleware positioning. `src/agent/` removed from root crate. `AGENTS.md` §1 + §2.1 + §2.6 + §2.7 + §4.2 updated to reflect the 3-crate workspace.
+- `docs/architecture.md` — rewritten to show the consolidated 3-crate layering + bridge module.
+- `docs/ai-agent-integration.md` — rewritten around `ActionInjector::apply` (replaces `AgentControlSession` examples).
+- `docs/development.md` — added `adk-bench` section; cargo commands updated.
+- `docs/INDEX.md` — rewritten around the 3-crate workspace + 15 ADRs.
+
+### Removed
+
+- `android-hid-daemon/` (entire crate, 1.7 kLOC)
+- `android-hid-agent/` (entire crate, 3.3 kLOC)
+- `android-hid-cli/` (entire crate, 42-LOC stub)
+- `android-hid-py/` (entire crate, 33-LOC stub)
+- `src/agent/` (8 files, 20.6 kLOC) — including public APIs `AgentControlSession`, `AgentAction`, `AgentPlanSummary`, `AgentControlClosed`, `AgentControlCloseReport`, `AgentControlCommandCloseReport`, `AgentObjectSelector`, `AgentTargetSelector`, `AgentTouchFrame`, `AgentScrollFrame`, `AgentRect`, `AgentPoint`, `AgentPlanBoundedPrefix`, `AgentPlanBoundedPrefixStop`, `DEFAULT_AGENT_COMMAND_BOUND`
+- `docs/agent-v2-design.md`
+- `docs/roadmap-exceed-handsets.md`
+- `docs/comparison-with-handsets.md`
+- `docs/adr/0006-plan-wire-format-is-json.md` (superseded by ADR-0012)
+- `docs/baselines/v3-phase{2,3,4,5.1,5-6-7}-*` (intermediate baselines; phase 1 + phase 6 retained)
+
+### Fixed
+
+- `ai-device-kernel` `Plan`/`PlanStep`/`PlanResult`/`StepResult` now derive `JsonSchema` (was a hidden compile error in the existing uncommitted edits; ADR-0012 wires through `Plan::version`).
+
+### Migration
+
+- External users of `AgentControlSession` etc.: pin to the `pre-adr-0015` git tag, or migrate to `ai_device_kernel::ActionInjector`.
+- External users of `android-hid-{daemon,agent,cli,py}`: same — these crates are deleted; git history retains the last pre-ADR-0015 commit under the `pre-adr-0015` tag.
+
+---
+
+## [0.1.0] - 2026-06-29
 
 - **Convert to Cargo workspace** — root `Cargo.toml` 现在既是 root 也是 workspace member;`members = [".", "android-hid-protocol", "android-hid-daemon", "android-hid-agent", "android-hid-cli", "android-hid-py"]`,`resolver = "2"`。无 breaking change:既有 byte-exact HID core 的 `Cargo.toml` 字段、API、`pub use` 全部不动,453 个既有测试 + 35 个新测试全部通过。
 - `AGENTS.md` §1(项目定位)+ §2.1(顶层布局)+ 新增 §2.7(兄弟 crate 协作约束),描述 workspace 布局和依赖方向(daemon → protocol;agent → protocol + 根 crate;cli → agent;py → agent)

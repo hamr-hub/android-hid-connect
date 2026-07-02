@@ -1,12 +1,11 @@
 [workspace]
 resolver = "2"
+# 2026-07-01 consolidation (ADR-0012): workspace = protocol + UHID core + AI middleware.
+# `android-hid-{daemon,agent,cli,py}` removed — superseded by `ai-device-kernel` (the
+# `adk` binary). See CHANGELOG.md for Removed entries.
 members = [
     ".",
     "android-hid-protocol",
-    "android-hid-daemon",
-    "android-hid-agent",
-    "android-hid-cli",
-    "android-hid-py",
     "ai-device-kernel",
 ]
 
@@ -22,9 +21,13 @@ bytes = "1"
 tokio = { version = "1", features = ["io-util", "macros", "rt", "sync", "time"] }
 criterion = { version = "0.8", default-features = false }
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 blake3 = { version = "1", default-features = false }
 rusqlite = { version = "0.31", default-features = false, features = ["bundled"] }
+schemars = { version = "0.8", default-features = false, features = ["derive"] }
+jsonschema = { version = "0.17", default-features = false }
+semver = { version = "1", default-features = false, features = ["serde"] }
 
 [workspace.lints.rust]
 rust_2018_idioms = { level = "warn", priority = -1 }
@@ -32,9 +35,9 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
-# Release profile shared by every member. CLI and daemon binaries benefit
-# most from `opt-level = "z"` + LTO + strip; the root lib crate is
-# unaffected because it has no release-specific binaries.
+# Release profile shared by every member. The `adk` binary benefits most from
+# `opt-level = "z"` + LTO + strip (smallest on-device footprint); the root lib
+# crate is unaffected because it has no release-specific binaries.
 [profile.release]
 opt-level = "z"
 lto = "fat"
@@ -45,22 +48,22 @@ debug = false
 overflow-checks = false
 
 # ---------------------------------------------------------------------------
-# Existing crate: byte-exact scrcpy UHID control surface.
-# This file is both the workspace root AND a workspace member — the existing
-# crate still builds from this directory with no source changes.
+# Byte-exact scrcpy UHID control surface — the lowest layer that
+# `ai-device-kernel`'s `bridge` module calls to drive real Android input.
+# This file is both the workspace root AND a workspace member.
 # ---------------------------------------------------------------------------
 
 [package]
 name = "android-hid-connect"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Rust port of scrcpy's UHID control protocol — drive Android via HID over scrcpy-server control socket"
+description = "AI middleware for controlling Android devices — byte-exact scrcpy UHID core (this crate) + on-device AI Device Kernel (sibling crate). One binary (`adk`), one port (9008), one protocol (postcard/4-verb)."
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
-keywords = ["android", "scrcpy", "uhid", "hid", "automation"]
-categories = ["api-bindings", "hardware-support"]
+keywords = ["android", "ai", "agent", "uhid", "automation"]
+categories = ["api-bindings", "hardware-support", "development-tools::cargo-plugins"]
 
 [lib]
 name = "android_hid_connect"

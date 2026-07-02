@@ -8,9 +8,9 @@
 //! surface.
 
 use ai_device_kernel::{
-    Action, A11yTree, DeviceState, Observation, Plan, PlanStep, Predicate,
-    PredicateEngine, ScreenId, StreamEngine, Memory,
     plan_executor::{execute, PlanFailure},
+    A11yTree, Action, DeviceState, Memory, Observation, Plan, PlanStep, Predicate, PredicateEngine,
+    ScreenId, StreamEngine,
 };
 
 /// Build one dummy observation with the given activity name.
@@ -27,6 +27,7 @@ fn obs_with_activity(seq: u64, component: &str) -> Observation {
         frame: None,
         state: DeviceState::unknown(0),
         events: vec![],
+        foreground_app: None,
     }
 }
 
@@ -101,7 +102,10 @@ fn plan_executor_with_predicate_engine_and_memory_smoke() {
 
     let mut action_cursor = 0usize;
     let result: Result<
-        (ai_device_kernel::PlanResult, ai_device_kernel::plan_executor::ExecutorCounters),
+        (
+            ai_device_kernel::PlanResult,
+            ai_device_kernel::plan_executor::ExecutorCounters,
+        ),
         (PlanFailure, Vec<ai_device_kernel::StepResult>),
     > = execute(
         &plan,
@@ -115,6 +119,7 @@ fn plan_executor_with_predicate_engine_and_memory_smoke() {
                 landed: true,
                 ground_truth: Default::default(),
                 elapsed_ms: 1,
+                ..Default::default()
             };
             action_cursor += 1;
             Ok(r)
@@ -150,31 +155,46 @@ fn plan_executor_with_predicate_engine_and_memory_smoke() {
     let next_sid = ScreenId::compute(b"a11y-N", b"ph-N", "com.foo/.Next");
     let done_sid = ScreenId::compute(b"a11y-D", b"ph-D", "com.foo/.Done");
 
-    memory.record_success(home_sid, Action::Tap {
-        x: 540,
-        y: 1200,
-        deadline_ms: 1000,
-    });
-    memory.record_success(main_sid, Action::Tap {
-        x: 540,
-        y: 1200,
-        deadline_ms: 1000,
-    });
-    memory.record_success(main_sid, Action::Tap {
-        x: 600,
-        y: 1300,
-        deadline_ms: 1000,
-    });
-    memory.record_success(next_sid, Action::Tap {
-        x: 720,
-        y: 480,
-        deadline_ms: 1000,
-    });
-    memory.record_success(done_sid, Action::Launch {
-        target: "com.foo/.Done".into(),
-        by: ai_device_kernel::LaunchBy::Component("com.foo/.Done".into()),
-        deadline_ms: 1000,
-    });
+    memory.record_success(
+        home_sid,
+        Action::Tap {
+            x: 540,
+            y: 1200,
+            deadline_ms: 1000,
+        },
+    );
+    memory.record_success(
+        main_sid,
+        Action::Tap {
+            x: 540,
+            y: 1200,
+            deadline_ms: 1000,
+        },
+    );
+    memory.record_success(
+        main_sid,
+        Action::Tap {
+            x: 600,
+            y: 1300,
+            deadline_ms: 1000,
+        },
+    );
+    memory.record_success(
+        next_sid,
+        Action::Tap {
+            x: 720,
+            y: 480,
+            deadline_ms: 1000,
+        },
+    );
+    memory.record_success(
+        done_sid,
+        Action::Launch {
+            target: "com.foo/.Done".into(),
+            by: ai_device_kernel::LaunchBy::Component("com.foo/.Done".into()),
+            deadline_ms: 1000,
+        },
+    );
 
     assert_eq!(memory.len(), 4);
     assert_eq!(memory.lookup(main_sid).unwrap().successes.len(), 2);
@@ -212,22 +232,27 @@ fn predicate_engine_and_memory_share_screen_ids() {
     assert!(
         results
             .iter()
-            .any(|(h, o)| *h == handle
-                && matches!(o, ai_device_kernel::PredicateOutcome::Matched)),
+            .any(|(h, o)| *h == handle && matches!(o, ai_device_kernel::PredicateOutcome::Matched)),
         "predicate should match on first observation"
     );
     engine.cancel(handle);
 
-    memory.record_success(sid, Action::Tap {
-        x: 540,
-        y: 1200,
-        deadline_ms: 1000,
-    });
-    memory.record_success(sid, Action::Tap {
-        x: 600,
-        y: 1300,
-        deadline_ms: 1000,
-    });
+    memory.record_success(
+        sid,
+        Action::Tap {
+            x: 540,
+            y: 1200,
+            deadline_ms: 1000,
+        },
+    );
+    memory.record_success(
+        sid,
+        Action::Tap {
+            x: 600,
+            y: 1300,
+            deadline_ms: 1000,
+        },
+    );
 
     assert!(memory.lookup(sid).is_some());
     assert_eq!(memory.hit_count(), 1);
@@ -235,4 +260,3 @@ fn predicate_engine_and_memory_share_screen_ids() {
     let entry = memory.peek(sid).expect("entry survives");
     assert_eq!(entry.successes.len(), 2);
 }
-

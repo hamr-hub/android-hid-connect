@@ -69,10 +69,7 @@ pub enum PlanFailure {
     },
     /// Predicate aborted by an explicit cancel (unused at the
     /// executor level but propagated for completeness).
-    Cancelled {
-        step_index: u32,
-        step_id: StepId,
-    },
+    Cancelled { step_index: u32, step_id: StepId },
 }
 
 impl PlanFailure {
@@ -122,7 +119,10 @@ pub struct ExecutorCounters {
 /// `Err(PlanFailure)` along with the **partial** steps so
 /// the host can decide whether to surface this as a
 /// `PlanResult.all_landed = false` or to discard.
-#[allow(clippy::too_many_arguments, reason = "executor signature is intentional")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "executor signature is intentional"
+)]
 pub fn execute<A, D>(
     plan: &Plan,
     predicate_engine: &mut PredicateEngine,
@@ -144,6 +144,7 @@ where
         frame: None,
         state: DeviceState::unknown(0),
         events: vec![],
+        ..Default::default()
     };
     let checkpoint_every = plan.checkpoint_every;
     let abort_on_error = plan.abort_on_error;
@@ -193,6 +194,7 @@ where
                         landed: false,
                         ground_truth: GroundTruth::default(),
                         elapsed_ms: 0,
+                        ..Default::default()
                     },
                     landed: false,
                     error: Some(reason),
@@ -337,11 +339,9 @@ fn wait_for_predicate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{
-        Action, A11yNodeChangeKind, A11yNodeDiff, LaunchBy, ObservationComponent,
-    };
-    use crate::plan::PlanStep;
+    use crate::action::{A11yNodeChangeKind, A11yNodeDiff, Action, LaunchBy, ObservationComponent};
     use crate::observation::A11yTree;
+    use crate::plan::PlanStep;
 
     fn idle_obs(seq: u64) -> Observation {
         Observation {
@@ -351,6 +351,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -367,6 +368,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -376,6 +378,7 @@ mod tests {
             landed: true,
             ground_truth: GroundTruth::default(),
             elapsed_ms: 1,
+            ..Default::default()
         }
     }
 
@@ -713,6 +716,7 @@ mod tests {
                         events: vec![],
                     },
                     elapsed_ms: 1,
+                    ..Default::default()
                 })
             },
             || {

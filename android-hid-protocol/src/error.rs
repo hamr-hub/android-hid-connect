@@ -173,7 +173,8 @@ impl ErrorFrame {
     /// Includes the [`ERR_PREFIX`], the uppercase tag, and — when
     /// `detail` is non-empty — the `:` separator + detail bytes.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(ERR_PREFIX.len() + self.code.as_tag().len() + self.detail.len() + 1);
+        let mut out =
+            Vec::with_capacity(ERR_PREFIX.len() + self.code.as_tag().len() + self.detail.len() + 1);
         out.extend_from_slice(ERR_PREFIX);
         out.extend_from_slice(self.code.as_tag().as_bytes());
         if !self.detail.is_empty() {
@@ -287,8 +288,7 @@ mod tests {
 
     #[test]
     fn parse_tag_only() {
-        let frame =
-            ErrorFrame::parse(b"ERR:NOT_FOUND").unwrap().unwrap();
+        let frame = ErrorFrame::parse(b"ERR:NOT_FOUND").unwrap().unwrap();
         assert_eq!(frame.code, ErrorCode::NotFound);
         assert_eq!(frame.detail, "");
     }
@@ -310,8 +310,7 @@ mod tests {
 
     #[test]
     fn parse_empty_detail_after_colon() {
-        let frame =
-            ErrorFrame::parse(b"ERR:TIMEOUT:").unwrap().unwrap();
+        let frame = ErrorFrame::parse(b"ERR:TIMEOUT:").unwrap().unwrap();
         assert_eq!(frame.code, ErrorCode::Timeout);
         assert_eq!(frame.detail, "");
     }

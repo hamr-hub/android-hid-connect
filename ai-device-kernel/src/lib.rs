@@ -1,86 +1,107 @@
-//! `ai-device-kernel` — on-device AI Device Kernel.
+//! `ai-device-kernel` — on-device AI Device Kernel — THE AI middleware
+//! for controlling Android devices.
 //!
-//! Phase 1 of the v3 redesign ([`docs/ai-device-kernel-v3-design.md`]).
-//! This crate provides the **typed** action surface, the 4-verb
-//! binary protocol, and the capability-registry contract — but
-//! does **not** yet ship the on-device implementation that
-//! replaces [`android-hid-daemon`]. That port lands in Phase 2
-//! alongside the state model, observation stream, and predicate
-//! engine.
+//! Phase 6.5 (2026-06-30) is the consolidated release per ADR-0012:
+//! this crate is the **single** AI middleware — 1 binary (`adk`),
+//! 1 port (9008), 1 protocol (postcard/4-verb), 1 typed-action surface,
+//! 1 capability registry. The legacy `android-hid-{daemon,agent,cli,py}`
+//! crates and the root `src/agent/` facade were retired; the kernel
+//! is the sole façade.
 //!
 //! ## Layering
 //!
 //! ```text
-//! ai-device-kernel (this crate)
-//!        ▲
+//! ai-device-kernel  (this crate — THE AI middleware)
 //!        │
-//! android-hid-protocol  (verb / error / frame types — no I/O)
+//!        ├─► android-hid-connect   (byte-exact scrcpy UHID core)
+//!        │       │
+//!        │       ▼
+//!        │   scrcpy-server         (on-device, AOSP process)
+//!        │
+//!        └─► android-hid-protocol  (verb / error / frame types — no I/O)
 //! ```
 //!
-//! Direction constraint (AGENTS.md §2.7): `ai-device-kernel`
-//! depends on `android-hid-protocol` only — it must NOT depend on
-//! `android-hid-connect` (byte-exact scrcpy core), `android-hid-daemon`
-//! (legacy daemon), `android-hid-agent` (host-side facade), or any
-//! other sibling crate.
+//! Direction: `ai-device-kernel` depends on both
+//! `android-hid-connect` (for the byte-exact UHID hot path via the
+//! [`bridge`] module) and `android-hid-protocol` (for the wire
+//! types). It depends on nothing else.
 //!
 //! ## Modules
 //!
 //! - [`ids`] — `ActionId`, `PlanId`, `StepId`, `PredicateHandle`,
 //!   `ScreenId` (16-byte blake3 fingerprint).
-//! - [`action`] — 12 typed [`Action`] variants, [`ActionResult`],
+//! - [`action`] — 12 typed [`Action`] variants + 2 Phase 4 +
+//!   2 Phase 5 (read-back) variants, [`ActionResult`],
 //!   [`GroundTruth`], [`A11yNodeDiff`], [`FrameDiff`].
 //! - [`plan`] — [`Plan`], [`PlanStep`], [`PlanResult`], [`StepResult`].
 //! - [`observation`] — [`Observation`], [`DeviceEvent`], [`DeviceState`].
 //! - [`predicate`] — 6-variant [`Predicate`], [`EventKind`], [`PredicateResult`].
 //! - [`protocol`] — 4-verb [`Frame`] layout with postcard-encoded payloads.
 //! - [`capability`] — [`Capability`] trait + [`CapabilityRegistry`].
-//! - [`state`] — in-memory [`StateModel`] (Phase 2 will fill in the
-//!   streaming logic on top).
+//! - [`state`] — in-memory [`StateModel`].
+//! - [`bridge`] — typed `Action` → byte-exact UHID execution path.
+//! - [`plan_executor`] — drive a [`Plan`] to completion via [`bridge`]
+//!   + [`predicate_engine`].
+//! - [`predicate_engine`] / [`predicate_wait`] — predicate resolution.
+//! - [`stream_engine`] — bounded observation stream.
+//! - [`ui_repr`] — ~500 B AutoDroid-style HTML-tagged UI repr.
+//! - [`memory`] / [`memory_sqlite`] — selector cache + scenario library.
 //!
 //! [`docs/ai-device-kernel-v3-design.md`]: ../../docs/ai-device-kernel-v3-design.md
-//! [`android-hid-daemon`]: ../android-hid-daemon/index.html
 
 #![deny(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
 pub mod action;
+pub mod bridge;
 pub mod capability;
+pub mod chunk_planner;
+pub mod cloud_llm;
+pub mod cold_start;
+pub mod egress;
 pub mod ids;
+pub mod json;
+pub mod llm_deployment;
 pub mod memory;
 #[cfg(feature = "sqlite")]
 pub mod memory_sqlite;
+pub mod mock_llm;
 pub mod observation;
+pub mod on_device_llm;
 pub mod plan;
 pub mod plan_executor;
 pub mod predicate;
 pub mod predicate_engine;
 pub mod predicate_wait;
 pub mod protocol;
+pub mod scenario_library;
+pub mod selector_cache;
+pub mod session_state;
 pub mod state;
 pub mod stream_engine;
 pub mod ui_repr;
 
 pub use action::{
-    Action, ActionResult, A11yNodeChangeKind, A11yNodeDiff, FrameDiff, GroundTruth,
-    LaunchBy, ObservationComponent, Rect,
+    A11yNodeChangeKind, A11yNodeDiff, Action, ActionResult, AtomicErrorCode, FrameDiff,
+    GroundTruth, LaunchBy, ObservationComponent, Rect,
 };
+pub use bridge::{ActionInjector, BridgeOutcome};
 pub use capability::{
     Capability, CapabilityContext, CapabilityError, CapabilityName, CapabilityOutput,
     CapabilityRegistry, CapabilityRequirements, ALL_CAPABILITY_NAMES,
 };
+pub use egress::EgressPolicy;
 pub use ids::{ActionId, PlanId, ScreenId, StepId};
-pub use observation::{
-    A11yTree, DeviceEvent, DeviceState, FrameSnapshot, Observation,
-};
-pub use plan::{Plan, PlanResult, PlanStep, StepResult};
 pub use memory::{ActionSequence, Memory};
 #[cfg(feature = "sqlite")]
 pub use memory_sqlite as memory_sqlite_backend;
+pub use observation::{
+    A11yTree, DeviceEvent, DeviceState, ForegroundApp, FrameSnapshot, Observation,
+};
+pub use plan::{Plan, PlanResult, PlanStep, StepResult};
 pub use plan_executor::{execute, ExecutorCounters, PlanFailure};
 pub use predicate::{EventKind, Predicate, PredicateHandle, PredicateResult};
-pub use predicate_engine::{
-    PredicateEngine, PredicateOutcome, RegisteredPredicate,
-};
+pub use predicate_engine::{PredicateEngine, PredicateOutcome, RegisteredPredicate};
 pub use predicate_wait::{wait_for, WaitOutcome};
 pub use protocol::{Frame, FrameFlags, ReplyPayload, RequestPayload, Verb};
 pub use state::StateModel;
@@ -129,11 +150,7 @@ mod tests {
     fn idle_query_includes_a11y_and_state() {
         let q = idle_query();
         match q {
-            RequestPayload::Query {
-                a11y,
-                frame,
-                state,
-            } => {
+            RequestPayload::Query { a11y, frame, state } => {
                 assert!(a11y);
                 assert!(state);
                 assert!(!frame);
@@ -160,6 +177,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            ..Default::default()
         };
         let _: Predicate = Predicate::Activity {
             component: "p/.a".into(),

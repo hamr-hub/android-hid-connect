@@ -19,6 +19,7 @@
 //! See v3 §3.2.0 (ScreenId), §3.2.1 (ActionId), §3.2.2 (PlanId/StepId),
 //! §3.2.4 (PredicateId) for the design intent.
 
+use schemars::{gen::SchemaGenerator, schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 /// Server-assigned action ID. u64 → 8 bytes on the wire, monotonic
@@ -27,9 +28,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Manual `Serialize`/`Deserialize` so postcard bypasses the
 /// tuple-struct tag byte (8 bytes raw, not 8 + 1).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ActionId(pub u64);
 
 impl Serialize for ActionId {
@@ -77,9 +76,7 @@ impl std::fmt::Display for ActionId {
 }
 
 /// Server-assigned plan ID. u64, same wire layout as [`ActionId`].
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlanId(pub u64);
 
 impl Serialize for PlanId {
@@ -125,9 +122,7 @@ impl std::fmt::Display for PlanId {
 /// Server-assigned step index within a `Plan`. 0-based; `u32` (the
 /// design targets plans of < 10⁵ steps and we want postcard-friendly
 /// 4-byte encoding on the wire).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StepId(pub u32);
 
 impl Serialize for StepId {
@@ -167,9 +162,7 @@ impl std::fmt::Display for StepId {
 /// Server-assigned predicate ID. Created when a `Predicate` is
 /// registered with the predicate engine; torn down on expiry or
 /// manual cancel.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PredicateHandle(pub u64);
 
 impl Serialize for PredicateHandle {
@@ -213,9 +206,7 @@ impl std::fmt::Display for PredicateHandle {
 /// screen renders to the same tree. Used as the Memory layer key
 /// (Phase 3) so the kernel can recall "what worked on this screen
 /// last time".
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ScreenId(pub [u8; 16]);
 
@@ -269,6 +260,66 @@ impl ScreenId {
 impl std::fmt::Display for ScreenId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.hex())
+    }
+}
+
+// --- JsonSchema impls for the IDs (ADR-0012 / PRD-A AC-5) --------------
+//
+// Schemars 0.8 derive doesn't see our manual Serialize/Deserialize impls
+// (it looks for `JsonSchema` on the type), so we hand-roll small integer
+// schemas. These match the postcard wire layout: u64 / u32 / `[u8; 16]`.
+//
+// Note: `semver::Version` would be a natural target for a hand-rolled
+// schema, but the orphan rule prevents `impl JsonSchema for Version`
+// in this crate. `Plan::version` therefore lives as `String` on the
+// wire; callers parse via `Plan::version_parsed()`.
+
+/// Public so external crates (tests, downstream consumers) can
+/// introspect / validate the wire-side ID schema. See ADR-0012.
+/// Public so external crates (tests, downstream consumers) can
+/// introspect / validate the wire-side ID schema. See ADR-0012.
+impl JsonSchema for ActionId {
+    fn schema_name() -> String {
+        "ActionId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        schemars::schema_for!(u64).schema.into()
+    }
+}
+
+impl JsonSchema for PlanId {
+    fn schema_name() -> String {
+        "PlanId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        schemars::schema_for!(u64).schema.into()
+    }
+}
+
+impl JsonSchema for StepId {
+    fn schema_name() -> String {
+        "StepId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        schemars::schema_for!(u32).schema.into()
+    }
+}
+
+impl JsonSchema for ScreenId {
+    fn schema_name() -> String {
+        "ScreenId".to_string()
+    }
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        // 16 raw bytes encoded as `hex` string on the JSON side
+        // (matches `ScreenId::Display`). The LLM never sees bytes
+        // directly; hex is more grep-friendly in fixtures.
+        use schemars::schema::InstanceType;
+        let obj = schemars::schema::SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            format: Some("^[0-9a-f]{32}$".to_string()),
+            ..Default::default()
+        };
+        Schema::Object(obj)
     }
 }
 

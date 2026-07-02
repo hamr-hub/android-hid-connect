@@ -58,3 +58,46 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.87
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --all-targets
+
+  # AI middleware invariant (AC-V3-7 / ADR-0015):
+  #   1 binary (`adk`), 1 port (9008), 1 protocol (postcard/4-verb),
+  #   single AI façade `ai-device-kernel`. This job grep-asserts the
+  #   structural invariants so a refactor that quietly re-introduces
+  #   parallel facades (e.g. resurrects `android-hid-daemon`) fails CI.
+  ai-middleware-invariant:
+    name: AI middleware invariant (AC-V3-7)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Single AI façade: only `ai-device-kernel` and the root crate remain
+        run: |
+          test "1" = "$(ls -d android-hid-* 2>/dev/null | wc -l)" \
+            || (echo "FAIL: extra android-hid-* crate dirs found"; exit 1)
+          test ! -d android-hid-daemon \
+            || (echo "FAIL: android-hid-daemon/ must be removed (ADR-0015)"; exit 1)
+          test ! -d android-hid-agent \
+            || (echo "FAIL: android-hid-agent/ must be removed (ADR-0015)"; exit 1)
+          test ! -d android-hid-cli \
+            || (echo "FAIL: android-hid-cli/ must be removed (ADR-0015)"; exit 1)
+          test ! -d android-hid-py \
+            || (echo "FAIL: android-hid-py/ must be removed (ADR-0015)"; exit 1)
+          test ! -d src/agent \
+            || (echo "FAIL: src/agent/ must be removed (ADR-0015)"; exit 1)
+      - name: Single binary `adk` on port 9008
+        run: |
+          grep -q '"adk"' ai-device-kernel/Cargo.toml \
+            || (echo "FAIL: ai-device-kernel must declare [[bin]] name = \"adk\""; exit 1)
+          grep -q 'DEFAULT_PORT: u16 = 9008' ai-device-kernel/src/lib.rs \
+            || (echo "FAIL: ai-device-kernel must default to port 9008"; exit 1)
+
+  # adk-bench CI gate (AC-CI4). p99 < 5 ms; non-zero exit on regression.
+  adk-bench:
+    name: adk-bench (p99 < 5 ms gate)
+    runs-on: ubuntu-latest
+    needs: linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p ai-device-kernel --bin adk-bench
+      - run: ./target/release/adk-bench --quick

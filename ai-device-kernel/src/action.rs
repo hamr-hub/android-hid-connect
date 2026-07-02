@@ -22,13 +22,62 @@
 //!   the typed surface for gamepad / canvas / WebView paths that
 //!   the typed enum can't reach (v3 P0 fix, see v3 §6.2).
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{ActionId, ScreenId};
 use crate::observation::{DeviceEvent, FrameSnapshot};
 
+/// Structured error code for atomic failures — see ADR-0013 / grill ADR-0004.
+///
+/// ADR-0013 mandates a fixed enum so the LLM can decide retry vs branch vs abort
+/// without re-deriving failure semantics from a free-text reason. JSON ser
+/// uses snake_case string discriminators; postcard keeps the underlying u8.
+///
+/// **Stability**: adding a new variant is a SemVer minor bump (gated by
+/// `Plan::version` per ADR-0006 / ADR-0012). Never reorder or rename.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AtomicErrorCode {
+    /// Selector (resource-id / text / content-desc) did not match any
+    /// node on the current screen. Retryable in principle (UI drift).
+    SelectorMiss,
+    /// Kernel-internal error (capability refused, runtime panic caught
+    /// at the executor boundary). May or may not be retryable.
+    KernelError,
+    /// Daemon-side `deadline_ms` elapsed before the action settled.
+    /// Retryable (network / device hiccup).
+    Timeout,
+    /// The kernel refused the action due to capability profile
+    /// (e.g. `phantom` profile refusing `Launch`). Not retryable.
+    PermissionDenied,
+    /// The action required the target app to be in foreground, but
+    /// `ForegroundApp.package` did not match. Not retryable without
+    /// an explicit `app_switch` first.
+    AppNotForeground,
+    /// The action references a variant or capability not yet wired
+    /// in the running kernel build. Not retryable; needs kernel update.
+    NotImplemented,
+}
+
+impl AtomicErrorCode {
+    /// Stable lowercase string label. Used for log lines, metrics tags,
+    /// and JSON discriminator.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::SelectorMiss => "selector_miss",
+            Self::KernelError => "kernel_error",
+            Self::Timeout => "timeout",
+            Self::PermissionDenied => "permission_denied",
+            Self::AppNotForeground => "app_not_foreground",
+            Self::NotImplemented => "not_implemented",
+        }
+    }
+}
+
 /// Launch target specifier — used by [`Action::Launch`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum LaunchBy {
     /// Component name (`pkg/.Activity`).
     Component(String),
@@ -47,7 +96,7 @@ pub enum LaunchBy {
 
 /// A sub-recipe of an observation — used by [`Action::DumpObservation`]
 /// to select which payload bits the daemon should sample.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum ObservationComponent {
     /// Include a11y tree snapshot.
     A11y,
@@ -63,7 +112,7 @@ pub enum ObservationComponent {
 
 /// Optional rectangle (x, y, w, h) for screen-relative regions.
 /// Used by `LocalizeText` / `DetectElement` to scope a search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct Rect {
     /// Left edge in screen pixels.
     pub x: i32,
@@ -102,7 +151,7 @@ impl Rect {
 /// Phase 4 adds `LocalizeText` + `DetectElement` on top of the
 /// 12 typed actions in §3.2.1; that brings the public surface
 /// to **14 typed actions** as called out in v3 §5 Phase 4 / AC-V3-4.1.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum Action {
     /// Tap at `(x, y)` in screen pixels. No 16 ms sleep, no fake
     /// delay (v3 P4 mitigation).
@@ -371,7 +420,7 @@ impl Action {
 
 /// Result of a single `Action` execution. Returned in the wire reply
 /// (see [`crate::protocol`]).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ActionResult {
     /// Server-assigned unique ID. Idempotent-replay safe: a retried
     /// `Action` carrying the same `id` returns the same result.
@@ -384,6 +433,21 @@ pub struct ActionResult {
     /// Server-measured elapsed ms (does not include network RTT;
     /// see v3 §3.2.1 "How long (server-measured)").
     pub elapsed_ms: u32,
+    /// Structured error code — see [`AtomicErrorCode`] (ADR-0013 /
+    /// grill ADR-0004). `None` on success, `Some(_)` on failure.
+    /// Postcard layout: always serialised (1-byte tag for `None`,
+    /// tag + variant for `Some`). Kept on the wire for round-trip
+    /// stability — `skip_serializing_if` would break the
+    /// struct-fixed-field decoder and panic with
+    /// `DeserializeUnexpectedEnd`.
+    #[serde(default)]
+    pub code: Option<AtomicErrorCode>,
+    /// Advisory retry flag — `true` if the LLM should consider
+    /// retrying this action (e.g. after a fresh `observe`). The
+    /// LLM is free to ignore (e.g. after N retries it should abort).
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub retryable: bool,
 }
 
 impl ActionResult {
@@ -397,12 +461,38 @@ impl ActionResult {
                 || self.ground_truth.frame_diff.is_some()
                 || !self.ground_truth.events.is_empty())
     }
+
+    /// Convenience — return `true` iff this result represents a
+    /// structured failure (i.e. `landed == false` and `code` is set).
+    /// LLM flow-control (ADR-0002) uses this to decide retry vs
+    /// branch vs abort without inspecting free-text reason.
+    #[must_use]
+    pub fn is_structured_failure(&self) -> bool {
+        !self.landed && self.code.is_some()
+    }
+}
+
+impl Default for ActionResult {
+    /// `id = 0`, `landed = false`, `ground_truth = empty`,
+    /// `elapsed_ms = 0`, `code = None`, `retryable = false`.
+    /// Matches `ActionResult { ..Default::default() }` semantics for
+    /// backwards-compatible test fixtures (ADR-0013 / PRD-A AC-1).
+    fn default() -> Self {
+        Self {
+            id: ActionId(0),
+            landed: false,
+            ground_truth: GroundTruth::default(),
+            elapsed_ms: 0,
+            code: None,
+            retryable: false,
+        }
+    }
 }
 
 /// Ground truth — what actually changed on the device after the
 /// `Action` ran. Returned in 1 RTT (no follow-up `dump_active`
 /// needed). See v3 §3.2.1.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GroundTruth {
     /// a11y nodes that changed (added / removed / text-changed /
     /// visibility-changed) since the action landed.
@@ -419,7 +509,7 @@ pub struct GroundTruth {
 }
 
 /// Per-node a11y change — see v3 §3.2.1 `a11y_diff`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct A11yNodeDiff {
     /// Affected node id. Stable for the lifetime of one dump.
     pub node_id: u32,
@@ -432,7 +522,8 @@ pub struct A11yNodeDiff {
 }
 
 /// Diff kind for a single a11y node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum A11yNodeChangeKind {
     Added,
     Removed,
@@ -443,7 +534,11 @@ pub enum A11yNodeChangeKind {
 
 /// Frame diff summary — see v3 §3.2.1 `frame_diff`. Lightweight
 /// enough to return in every action result.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+///
+/// Note: `Copy` is *not* derived because [`FrameSnapshot`] is no
+/// longer `Copy` after the `png: Option<Vec<u8>>` field was added
+/// (ADR-0014).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FrameDiff {
     /// Total pixel-difference score across the whole frame, `[0, 1]`.
     pub total: f32,
@@ -503,11 +598,10 @@ mod tests {
             ),
             (
                 Action::Wait {
-                    predicate:
-                        crate::predicate::Predicate::SelectorMatches {
-                            selector: "x".into(),
-                            timeout_ms: 0,
-                        },
+                    predicate: crate::predicate::Predicate::SelectorMatches {
+                        selector: "x".into(),
+                        timeout_ms: 0,
+                    },
                     deadline_ms: 3000,
                 },
                 3000,
@@ -604,8 +698,7 @@ mod tests {
             }
             .kind_label(),
         ];
-        let unique: std::collections::HashSet<_> =
-            labels.iter().copied().collect();
+        let unique: std::collections::HashSet<_> = labels.iter().copied().collect();
         assert_eq!(unique.len(), labels.len(), "duplicate kind labels");
     }
 
@@ -675,7 +768,11 @@ mod tests {
         ];
         for action in &actions {
             let caps = action.capabilities();
-            assert!(!caps.is_empty(), "no capabilities for {}", action.kind_label());
+            assert!(
+                !caps.is_empty(),
+                "no capabilities for {}",
+                action.kind_label()
+            );
             // Second call returns the same set (order-preserving).
             let caps2 = action.capabilities();
             assert_eq!(caps, caps2, "non-deterministic capabilities");
@@ -730,8 +827,12 @@ mod tests {
                 ..Default::default()
             },
             elapsed_ms: 1,
+            ..Default::default()
         };
-        assert!(!ar.has_ground_truth(), "landed=false → no ground truth flag");
+        assert!(
+            !ar.has_ground_truth(),
+            "landed=false → no ground truth flag"
+        );
         ar.landed = true;
         assert!(ar.has_ground_truth(), "landed=true + non-empty diff → true");
     }
@@ -743,8 +844,7 @@ mod tests {
             deadline_ms: 1500,
         };
         let bytes = postcard::to_allocvec(&action).expect("encode action");
-        let decoded: Action =
-            postcard::from_bytes(&bytes).expect("decode action");
+        let decoded: Action = postcard::from_bytes(&bytes).expect("decode action");
         assert_eq!(decoded, action);
     }
 
@@ -761,10 +861,10 @@ mod tests {
                 events: vec![DeviceEvent::WindowFocusChanged { window_id: 42 }],
             },
             elapsed_ms: 12,
+            ..Default::default()
         };
         let bytes = postcard::to_allocvec(&result).expect("encode");
-        let decoded: ActionResult =
-            postcard::from_bytes(&bytes).expect("decode");
+        let decoded: ActionResult = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(decoded, result);
     }
 
@@ -817,6 +917,7 @@ mod tests {
             is_keyframe: true,
             pts: 90000,
             scene_change_score: 0.5,
+            ..Default::default()
         };
         let diff = FrameDiff {
             total: 0.4,
@@ -825,8 +926,7 @@ mod tests {
             source: src,
         };
         let bytes = postcard::to_allocvec(&diff).expect("encode");
-        let decoded: FrameDiff =
-            postcard::from_bytes(&bytes).expect("decode");
+        let decoded: FrameDiff = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(decoded, diff);
     }
 

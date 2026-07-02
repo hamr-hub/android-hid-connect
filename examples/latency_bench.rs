@@ -24,9 +24,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-use android_hid_connect::control::message::{
-    ControlMessage, InjectTouchEvent,
-};
+use android_hid_connect::control::message::{ControlMessage, InjectTouchEvent};
 use android_hid_connect::hid::gamepad::GamepadHid;
 use android_hid_connect::hid::keyboard::KeyboardHid;
 use android_hid_connect::types::{GamepadAxis, Modifiers};
@@ -255,9 +253,7 @@ fn main() -> std::process::ExitCode {
     stream.write_all(&scratch).unwrap();
     stream.flush().unwrap();
 
-    let gamepad_msg = gp
-        .axis_event(1, GamepadAxis::LeftX, 16384)
-        .unwrap();
+    let gamepad_msg = gp.axis_event(1, GamepadAxis::LeftX, 16384).unwrap();
     let mut samples_d = Samples::default();
     for _ in 0..iters {
         let t0 = Instant::now();

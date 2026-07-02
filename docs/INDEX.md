@@ -1,80 +1,112 @@
 # Documentation Index — `android-hid-connect`
 
-> 全部专题文档的导航。新增文档必须在这里登记。
+> The project is an **AI middleware for controlling Android devices**.
+> Per [ADR-0015](adr/0015-ai-middleware-consolidation.md) (2026-07-01),
+> the workspace is consolidated into 3 crates with a single binary
+> `adk` and a single AI façade (`ai-device-kernel`).
 
 ---
 
-## 入口
+## First-time readers — pick your path
 
-| 入口 | 何时读 | 何时跳过 |
-| ---- | ------ | -------- |
-| [`README.md`](../README.md) | 第一次接触本 crate,想跑通最小例子 | 已经会用 `HidSession` / `AgentControlSession` |
-| [`AGENTS.md`](../AGENTS.md) | 准备提 PR / 改字节布局 / 加新 module | 只是 `cargo add` 拿来用 |
+### Path A — "I want to drive an Android device from an AI agent"
 
-## 专题文档
+1. [`README.md`](../README.md) — protocol overview + minimal example
+2. [`docs/ai-agent-integration.md`](ai-agent-integration.md) —
+   `ai_device_kernel::{Plan, Action, Observation}` API + LLM
+   integration recipe
+3. [`docs/architecture.md`](architecture.md) — module layering +
+   the single-binary/single-port/single-protocol invariant
 
-| 文档 | 内容 | 读完后你会做什么 |
-| ---- | ---- | ---------------- |
-| [`architecture.md`](architecture.md) | 模块依赖图、线程/生命周期模型、纯度边界 | 知道在哪里加新功能不会破坏分层 |
-| [`wire-format.md`](wire-format.md) | 22 control_msg + 3 AI + 3 HID report + 3 device_msg 字节布局速查 | 排查设备端拒收 / 对照 scrcpy C 端源码 |
-| [`scrcpy-protocol-compatibility.md`](scrcpy-protocol-compatibility.md) | 锁定的 scrcpy v2.7 版本 + 已知上游 caveat + 跟踪流程 | 升级 scrcpy 上游 / 报告 byte-exact 偏差 |
-| [`ai-agent-integration.md`](ai-agent-integration.md) | LLM / agent runtime 怎么用 `AgentControlSession` | 把本 crate 嵌入 observe-plan-act 循环 |
-| [`development.md`](development.md) | 本地开发循环 + 真机 E2E 步骤 + CI 矩阵 | 提 PR 前自检 / 跑分对比 |
-| [`comparison-with-handsets.md`](comparison-with-handsets.md) | 本 crate vs `handsets` 仓库的多维度对比 | 选型决策(精度 HID vs a11y 自动化) |
-| [`roadmap-exceed-handsets.md`](roadmap-exceed-handsets.md) | 7 个 phase 的实施路线图,包含 workspace 布局和能力矩阵 | 计划 handsets 功能的 Rust 替代 / 选 Phase 切入点 |
+### Path B — "I want to modify the kernel"
 
-## 配套文件
+1. [`AGENTS.md`](../AGENTS.md) — collaboration rules + allowed/forbidden
+2. [`docs/architecture.md`](architecture.md) — module dependencies
+3. [`docs/ai-device-kernel-v3-design.md`](ai-device-kernel-v3-design.md) —
+   the v3 design that the kernel implements
 
-| 文件 | 内容 |
+### Path C — "I want to understand a wire-level decision"
+
+1. [`docs/wire-format.md`](wire-format.md) — byte-level layout
+2. [`docs/scrcpy-protocol-compatibility.md`](scrcpy-protocol-compatibility.md) —
+   scrcpy v2.7 byte-exact contract + known caveats
+3. [`docs/adr/`](adr/) — the 15 ADRs that pin down every
+   protocol-level decision
+
+---
+
+## Crates
+
+| Crate | Cargo name | Role | LOC |
+| ----- | ---------- | ---- | --- |
+| Workspace root | `android-hid-connect` | Byte-exact scrcpy UHID core (library); AI middleware coordinates | ~13 k |
+| Protocol types | [`android-hid-protocol`](../android-hid-protocol/) | Wire-level types (`Frame`, `Verb`, error codes, k=v parser) — zero deps | ~1.8 k |
+| AI middleware | [`ai-device-kernel`](../ai-device-kernel/) | THE AI façade — 1 binary `adk`, 1 port 9008, 1 protocol, 1 typed `Action` | ~7.3 k |
+
+See ADR-0015 for the consolidation rationale (4 sibling crates
+deleted 2026-07-01).
+
+---
+
+## Topics
+
+| Topic | File | Read this when … |
+| ----- | ---- | ---------------- |
+| Architecture | [`architecture.md`](architecture.md) | you need to know where to add a feature without breaking layering |
+| AI agent integration | [`ai-agent-integration.md`](ai-agent-integration.md) | you want to embed the middleware in an LLM agent runtime |
+| Bridge module (Action → UHID) | [`ai-device-kernel/src/bridge.rs`](../ai-device-kernel/src/bridge.rs) | you need to map a typed `Action` to a real device input |
+| Wire format | [`wire-format.md`](wire-format.md) | you're chasing a byte-level mismatch with scrcpy-server |
+| Scrcpy compat | [`scrcpy-protocol-compatibility.md`](scrcpy-protocol-compatibility.md) | you're bumping the pinned scrcpy version or reporting a byte drift |
+| v3 kernel design | [`ai-device-kernel-v3-design.md`](ai-device-kernel-v3-design.md) | you want the why behind the 12 typed `Action`s |
+| Development loop | [`development.md`](development.md) | you're setting up the dev env, want CI commands, or want to run real-device E2E |
+| Performance | [`perf/real-device-call-flow.md`](perf/real-device-call-flow.md) | you want to compare host-adb vs kernel-internal intent→UHID hot paths |
+
+---
+
+## ADRs (Architecture Decision Records)
+
+The 15 ADRs are the authoritative contract for every protocol-level
+and middleware-level decision. Read in order for full context:
+
+| # | Title | Pinning down … |
+| - | ----- | -------------- |
+| [0001](adr/0001-llm-minimum-unit-is-intent.md) | LLM minimum unit is an Intent | the "what" not "how" boundary |
+| [0002](adr/0002-flow-control-is-llm-owned.md) | Flow control is LLM-owned | retry/branch/wait live outside the kernel |
+| [0003](adr/0003-planning-granularity-is-per-chunk.md) | Planning granularity is per-chunk | bounded chunk size ≤ 4 atomics |
+| [0004](adr/0004-error-contract-is-structured-atomicresult.md) | Errors are typed `AtomicResult` | symmetric, value-based error envelope |
+| [0005](adr/0005-multi-app-orchestration-hybrid-app-switch.md) | Multi-app orchestration is hybrid | explicit `app_switch` atomic |
+| [0007](adr/0007-llm-deployment-is-hybrid.md) | LLM deployment is hybrid | on-device fast path + cloud escalation |
+| [0008](adr/0008-egress-policy-text-and-snapshot-only.md) | Egress policy: text + snapshot only | 操作轨迹 never leaves the device |
+| [0009](adr/0009-session-state-is-bounded-ondevice-only.md) | Session state is bounded on-device | bounded working memory per task |
+| [0010](adr/0010-scenario-library-is-hybrid.md) | Scenario library is hybrid | templates + recordings + fresh-plan fallback |
+| [0011](adr/0011-cold-start-strategy-is-tiered.md) | Cold start is tiered | ship-time → per-device → per-user |
+| [0012](adr/0012-plan-message-json-wire.md) | Plan message wire format is JSON | zero-translation prompt-engineering |
+| [0013](adr/0013-atomic-result-error-enum.md) | Atomic error code enum | fixed 6-variant `AtomicErrorCode` |
+| [0014](adr/0014-foreground-app-and-png-snapshot.md) | ForegroundApp + PNG snapshot channels | mandatory foreground state + multimodal vision |
+| [0015](adr/0015-ai-middleware-consolidation.md) | **AI middleware consolidation** | **2026-07-01**: 4 crates + root `src/agent/` deleted |
+
+---
+
+## Baselines
+
+- [`v3-phase1-acceptance-2026-06-30.md`](baselines/v3-phase1-acceptance-2026-06-30.md) — Phase 1 acceptance (AC source of truth)
+- [`v3-phase6-baseline-2026-06-30.md`](baselines/v3-phase6-baseline-2026-06-30.md) — Phase 6 baseline (latest AI middleware baseline)
+- [`v3-phase6-latency-2026-06-30.md`](baselines/v3-phase6-latency-2026-06-30.md) — Phase 6 latency profile (kernel-internal vs host-adb)
+- [`v3-acceptance-all-phases-2026-06-30.md`](baselines/v3-acceptance-all-phases-2026-06-30.md) — full multi-phase acceptance roll-up
+- 2 × `v3-phase6-sm-g9910-*.png` — real-device screenshots
+
+---
+
+## Companion files
+
+| File | What |
 | ---- | ---- |
-| [`../ACCEPTANCE.md`](../ACCEPTANCE.md) | AC-C/H/S/T/R 验收点表 + 真机回归记录 + 历史 bug 修复 |
-| [`../CHANGELOG.md`](../CHANGELOG.md) | keep-a-changelog 格式的变更日志(release-please 会读) |
-| [`../Cargo.toml`](../Cargo.toml) | crate 元数据 + 依赖 + feature flag |
-| [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml) | CI 矩阵(ubuntu / macos / windows + MSRV) |
+| [`../AGENTS.md`](../AGENTS.md) | collaboration rules (allowed/forbidden + AI-agent meta-rule) |
+| [`../ACCEPTANCE.md`](../ACCEPTANCE.md) | AC-C/H/S/T/R acceptance + real-device regression log + history |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | keep-a-changelog log (release-please reads this) |
+| [`../Cargo.toml`](../Cargo.toml) | workspace manifest |
+| [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml) | CI matrix (ubuntu/macos/windows + MSRV + adk-bench smoke) |
 
 ---
 
-## 阅读路径 (建议)
-
-按用途选路径:
-
-### 路径 A — "我想用这个 crate"
-
-1. [`README.md`](../README.md) → 协议概览 + 最小例子
-2. [`docs/ai-agent-integration.md`](ai-agent-integration.md) → 如果你在写 LLM agent
-3. [`docs/architecture.md`](architecture.md) → 想知道 `HidSession` / `AgentControlSession` / `HidClient` 怎么选
-
-### 路径 B — "我想改这个 crate"
-
-1. [`AGENTS.md`](../AGENTS.md) → 必读,目录规则 + 允许/禁止
-2. [`docs/architecture.md`](architecture.md) → 模块分层 + 依赖方向
-3. [`docs/wire-format.md`](wire-format.md) → 字节布局(改 hid/control 前必看)
-4. [`docs/scrcpy-protocol-compatibility.md`](scrcpy-protocol-compatibility.md) → 字节兼容契约
-5. [`docs/development.md`](development.md) → 跑测试 / 真机 E2E
-
-### 路径 C — "我在选 Android 自动化栈"
-
-1. [`docs/comparison-with-handsets.md`](comparison-with-handsets.md) → 本 crate vs `handsets`
-2. [`README.md`](../README.md) §"What this crate does" → 能力矩阵摘录
-3. [`ACCEPTANCE.md`](../ACCEPTANCE.md) §9 → 真机回归 checklist
-
-### 路径 D — "我想做 handsets 的 Rust 替代"
-
-1. [`roadmap-exceed-handsets.md`](roadmap-exceed-handsets.md) → 7-phase 实施路线图 + workspace 布局 + 能力矩阵
-2. [`README.md`](../README.md) → 当前公开 API 与 byte-exact 契约
-3. [`AGENTS.md`](../AGENTS.md) §2.7 → sibling crate 依赖方向 + 最低规则
-4. [`docs/architecture.md`](architecture.md) → 模块分层,用于评估新功能落在哪一层
-
----
-
-## 文档维护规则
-
-- 新增专题文档 → 在本文件登记 + 在 `AGENTS.md` §8 加链接 + 在 `README.md` "Documentation" 段加链接。
-- 删文档 → 先确认没有其它文档引用,再在本文件去掉条目。
-- 改文档里的数字(测试数、scrcpy 版本号、跑分日期) → 全文 grep 同步更新。
-- 文档代码示例用 ```` ```rust,no_run ```` 或 ```` ```text ````,**不要**在文档里贴真实命令输出(会过期)。
-- 文档长度无硬上限,但单文件 > 1000 行要拆。
-
----
-
-最后更新: 2026-06-29。
+Last updated: 2026-07-01 (post-ADR-0015 consolidation).

@@ -25,11 +25,11 @@
 //!
 //! ## Persistence
 //!
-//! AC-V3-3.6 says "Memory 落盘 SQLite, 重启 daemon 不丢失".
+//! AC-V3-3.6 says "Memory 落盘 SQLite, 重启 kernel 不丢失".
 //! Phase 3 lands the in-memory cache. SQLite persistence
 //! ships in Phase 3.x because the dep (`rusqlite`) lands in
-//! a follow-up commit alongside the existing workspace's
-//! `android-hid-daemon` SQLite usage.
+//! a follow-up commit alongside the existing kernel's
+//! memory_sqlite backend.
 //!
 //! ## Threading
 //!
@@ -135,12 +135,7 @@ impl Memory {
     }
 
     /// Record a failed action for the given screen.
-    pub fn record_failure(
-        &mut self,
-        screen_id: ScreenId,
-        action: Action,
-        reason: String,
-    ) {
+    pub fn record_failure(&mut self, screen_id: ScreenId, action: Action, reason: String) {
         let entry = self.entries.entry(screen_id).or_default();
         entry.failures.push((action, reason));
         self.touch_lru(screen_id);
@@ -202,9 +197,7 @@ impl Memory {
             }
             // If we exhausted the LRU without removing
             // anything, break to avoid an infinite loop.
-            if self.entries.len() > Self::MAX_ENTRIES
-                && self.lru.is_empty()
-            {
+            if self.entries.len() > Self::MAX_ENTRIES && self.lru.is_empty() {
                 break;
             }
         }
@@ -215,8 +208,7 @@ impl Memory {
     #[must_use]
     pub fn approx_memory_bytes(&self) -> usize {
         // Rough estimate: 256 B per cached ActionSequence.
-        self.entries.len() * 256
-            + self.lru.len() * std::mem::size_of::<ScreenId>()
+        self.entries.len() * 256 + self.lru.len() * std::mem::size_of::<ScreenId>()
     }
 }
 
@@ -377,8 +369,7 @@ mod tests {
         let mut seq = ActionSequence::new();
         assert_eq!(seq.attempt_count(), 0);
         seq.successes.push(dummy_action_x());
-        seq.failures
-            .push((dummy_action_y(), "fail".into()));
+        seq.failures.push((dummy_action_y(), "fail".into()));
         assert_eq!(seq.attempt_count(), 2);
     }
 

@@ -371,11 +371,8 @@ mod tests {
         use crate::transport::MockTransport;
         use crate::types::HID_ID_GAMEPAD_FIRST;
 
-        let session = HidSession::open(
-            MockTransport::new(),
-            OpenRequest::gamepad_only_realtime(),
-        )
-        .expect("open gamepad-only session");
+        let session = HidSession::open(MockTransport::new(), OpenRequest::gamepad_only_realtime())
+            .expect("open gamepad-only session");
         let (client, dispatcher) = session
             .into_client_with_gamepad_ring()
             .expect("client w/ ring");
@@ -436,8 +433,8 @@ mod tests {
                         break;
                     }
                     let rd_len_idx = i + 8 + name_len;
-                    let rd_len = u16::from_be_bytes([bytes[rd_len_idx], bytes[rd_len_idx + 1]])
-                        as usize;
+                    let rd_len =
+                        u16::from_be_bytes([bytes[rd_len_idx], bytes[rd_len_idx + 1]]) as usize;
                     i += 8 + name_len + 2 + rd_len;
                 }
                 13 => {

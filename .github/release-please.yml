@@ -8,6 +8,12 @@ permissions:
   contents: write
   pull-requests: write
 
+# Per ADR-0015 (2026-07-01): only 3 packages ship.
+#   - android-hid-connect      (workspace root, byte-exact UHID core)
+#   - android-hid-protocol     (zero-dep wire types)
+#   - ai-device-kernel         (THE AI middleware — lib + adk binary)
+# The retired crates (`android-hid-{daemon,agent,cli,py}`) are
+# deliberately absent; git history retains the pre-ADR-0015 code.
 jobs:
   release-please:
     runs-on: ubuntu-latest

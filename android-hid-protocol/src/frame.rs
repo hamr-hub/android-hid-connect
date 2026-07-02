@@ -119,10 +119,7 @@ impl Frame {
         let len: u32 = self.bytes.len().try_into().map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "frame payload {} bytes exceeds u32::MAX",
-                    self.bytes.len()
-                ),
+                format!("frame payload {} bytes exceeds u32::MAX", self.bytes.len()),
             )
         })?;
         out.write_all(&len.to_be_bytes())?;
@@ -158,9 +155,7 @@ impl Frame {
         if declared > MAX_FRAME_LEN {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "frame length {declared} exceeds cap {MAX_FRAME_LEN}"
-                ),
+                format!("frame length {declared} exceeds cap {MAX_FRAME_LEN}"),
             ));
         }
         let mut payload = vec![0u8; declared];
@@ -341,9 +336,7 @@ mod tests {
     fn stream_terminator_after_payload() {
         // The classic multi-frame reply: one payload, then terminator.
         let mut bytes = Vec::new();
-        Frame::new(b"chunk-1".to_vec())
-            .encode(&mut bytes)
-            .unwrap();
+        Frame::new(b"chunk-1".to_vec()).encode(&mut bytes).unwrap();
         Frame::empty_marker().encode(&mut bytes).unwrap();
 
         let mut cur = Cursor::new(bytes);

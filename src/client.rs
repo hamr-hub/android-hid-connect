@@ -693,7 +693,6 @@ impl std::fmt::Debug for FlushRegistry {
     }
 }
 
-
 /// Producer side of the parallel control channel. `Clone` = additional
 /// producer to the same channel. `Send` but not `Sync` (mpsc isn't);
 /// use `Arc<HidClient>` if needed.
@@ -805,9 +804,7 @@ impl<T: TransportWrite + Send + 'static> HidSession<T> {
     /// loop in `OpenRequest::gamepad_only_realtime()` mode. For mixed
     /// traffic (keyboard + mouse + gamepad from many threads), the mpsc
     /// path is fine and simpler.
-    pub fn into_client_with_gamepad_ring(
-        self,
-    ) -> Result<(HidClient, HidDispatcher<T>)> {
+    pub fn into_client_with_gamepad_ring(self) -> Result<(HidClient, HidDispatcher<T>)> {
         let ring = Arc::new(GamepadFrameRing::new());
         let close_flag = Arc::new(AtomicBool::new(false));
         let error_flag = Arc::new(AtomicBool::new(false));
@@ -2249,9 +2246,8 @@ impl HidClient {
     pub fn try_send_frame_unchecked(&self, frame: GamepadFrameRaw) -> Result<()> {
         // Fast path: drop-on-full is the correct gamepad semantics.
         if let Some(ring) = &self.gamepad_ring {
-            ring.push(frame).map_err(|_| {
-                Error::SessionLifecycle("gamepad ring full (drop-on-full)")
-            })?;
+            ring.push(frame)
+                .map_err(|_| Error::SessionLifecycle("gamepad ring full (drop-on-full)"))?;
             return Ok(());
         }
         self.tx
@@ -2411,9 +2407,8 @@ impl HidClient {
         // stale frame); we do NOT fall back to the mpsc here because
         // the caller explicitly asked for non-blocking semantics.
         if let Some(ring) = &self.gamepad_ring {
-            ring.push(frame).map_err(|_| {
-                Error::SessionLifecycle("gamepad ring full (drop-on-full)")
-            })?;
+            ring.push(frame)
+                .map_err(|_| Error::SessionLifecycle("gamepad ring full (drop-on-full)"))?;
             return Ok(());
         }
         self.tx

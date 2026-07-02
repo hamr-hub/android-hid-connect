@@ -87,13 +87,8 @@ impl PredicateEngine {
     pub fn register(&mut self, predicate: Predicate) -> PredicateHandle {
         let handle = PredicateHandle(self.next_handle);
         self.next_handle = self.next_handle.wrapping_add(1);
-        self.predicates.insert(
-            handle,
-            RegisteredPredicate {
-                handle,
-                predicate,
-            },
-        );
+        self.predicates
+            .insert(handle, RegisteredPredicate { handle, predicate });
         self.registered_count = self.registered_count.saturating_add(1);
         handle
     }
@@ -239,7 +234,11 @@ fn observation_activity_matches(obs: &Observation, component: &str) -> bool {
 /// 0.05 (i.e., "no change") within `timeout_ms` of daemon
 /// start. This is a stub for Phase 2 (the real implementation
 /// will fold durations across multiple observations).
-fn observation_has_scene_stable_event(obs: &Observation, duration_ms: u32, timeout_ms: u32) -> bool {
+fn observation_has_scene_stable_event(
+    obs: &Observation,
+    duration_ms: u32,
+    timeout_ms: u32,
+) -> bool {
     if duration_ms > timeout_ms {
         return false;
     }
@@ -259,15 +258,15 @@ fn observation_has_a11y_idle_event(obs: &Observation, duration_ms: u32, timeout_
     if duration_ms > timeout_ms {
         return false;
     }
-    obs.events.iter().any(|ev| {
-        matches!(ev, DeviceEvent::ConfigurationChanged)
-    }) || obs.a11y.as_ref().is_some_and(|a| a.node_count > 0)
+    obs.events
+        .iter()
+        .any(|ev| matches!(ev, DeviceEvent::ConfigurationChanged))
+        || obs.a11y.as_ref().is_some_and(|a| a.node_count > 0)
 }
 
 /// Stub for SelectorMatches: matches if the a11y JSON contains
-/// the selector string as a substring. A real impl delegates to
-/// `android-hid-agent::selectors::Selector` — wiring that lands
-/// when the binary ships.
+/// the selector string as a substring. A full impl lands when
+/// the on-device binary ships — see ADR-0012.
 fn observation_selector_matches(obs: &Observation, selector: &str) -> bool {
     let Some(a11y) = &obs.a11y else { return false };
     a11y.json.contains(selector)
@@ -276,7 +275,9 @@ fn observation_selector_matches(obs: &Observation, selector: &str) -> bool {
 /// True iff the observation contains at least one matching
 /// `EventKind`.
 fn observation_contains_event_kind(obs: &Observation, kind: EventKind) -> bool {
-    obs.events.iter().any(|ev| EventKind::from_event(ev) == Some(kind))
+    obs.events
+        .iter()
+        .any(|ev| EventKind::from_event(ev) == Some(kind))
 }
 
 #[cfg(test)]
@@ -297,6 +298,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![],
+            foreground_app: None,
         }
     }
 
@@ -308,6 +310,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![ev],
+            foreground_app: None,
         }
     }
 
@@ -398,9 +401,12 @@ mod tests {
             component: "p/.x".into(),
             timeout_ms: 100,
         });
-        let obs = obs_with_event(0, DeviceEvent::ActivityResumed {
-            component: "p/.x".into(),
-        });
+        let obs = obs_with_event(
+            0,
+            DeviceEvent::ActivityResumed {
+                component: "p/.x".into(),
+            },
+        );
         assert_eq!(
             engine.on_observation(&obs)[0].1,
             PredicateOutcome::NoMatch,
@@ -416,10 +422,7 @@ mod tests {
             timeout_ms: 5000,
         });
         let obs = obs_with_event(0, DeviceEvent::SceneChangeDetected { score: 0.01 });
-        assert_eq!(
-            engine.on_observation(&obs)[0].1,
-            PredicateOutcome::Matched
-        );
+        assert_eq!(engine.on_observation(&obs)[0].1, PredicateOutcome::Matched);
     }
 
     #[test]
@@ -430,10 +433,7 @@ mod tests {
             timeout_ms: 5000,
         });
         let obs = obs_with_event(0, DeviceEvent::SceneChangeDetected { score: 0.5 });
-        assert_eq!(
-            engine.on_observation(&obs)[0].1,
-            PredicateOutcome::NoMatch
-        );
+        assert_eq!(engine.on_observation(&obs)[0].1, PredicateOutcome::NoMatch);
     }
 
     #[test]
@@ -518,6 +518,7 @@ mod tests {
             frame: None,
             state: DeviceState::unknown(0),
             events: vec![DeviceEvent::SceneChangeDetected { score: 0.5 }],
+            foreground_app: None,
         };
         let results = engine.on_observation(&obs);
         assert_eq!(results.len(), 3);
@@ -543,10 +544,7 @@ mod tests {
             component: "q".into(),
             timeout_ms: 1000,
         });
-        assert!(
-            h2.0 > h1.0,
-            "handles must keep advancing across clears"
-        );
+        assert!(h2.0 > h1.0, "handles must keep advancing across clears");
     }
 
     #[test]
@@ -578,19 +576,14 @@ mod tests {
     fn selectors_substring_stub_works() {
         // SelectorMatches has a stub implementation that
         // matches on substring presence in the a11y JSON. The
-        // real impl delegates to `android-hid-agent::selectors`;
-        // that wires up in Phase 6 (binary).
+        // real impl lands in the on-device binary — see
+        // ADR-0012.
         let mut engine = PredicateEngine::new();
         let _ = engine.register(Predicate::SelectorMatches {
             selector: "login".into(),
             timeout_ms: 5000,
         });
-        let obs_match = obs_with_a11y(
-            0,
-            "p/.a",
-            5,
-            "[{\"class\":\"Button\",\"id\":\"login\"}]",
-        );
+        let obs_match = obs_with_a11y(0, "p/.a", 5, "[{\"class\":\"Button\",\"id\":\"login\"}]");
         let obs_other = obs_with_a11y(0, "p/.a", 5, "[{\"id\":\"other\"}]");
         assert_eq!(
             engine.on_observation(&obs_match)[0].1,

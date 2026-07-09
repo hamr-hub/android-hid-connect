@@ -236,6 +236,123 @@ impl GamepadFrameRaw {
     }
 }
 
+/// RAII guard for [`HidSession::key_chord`].
+///
+/// If `key_chord` bails between holding the modifiers and releasing
+/// them, the device would otherwise see Ctrl / Shift / Alt still
+/// pressed — the next typed character would render as Ctrl-C / Shift-A.
+/// The guard emits a no-key + cleared-mod report on `Drop` unless
+/// `disarm()` is called first (which marks the chord as successfully
+/// completed). Drop errors are intentionally swallowed: rollback
+/// failures must not mask the original error already on the way out.
+struct KbdChordGuard<'a, T: TransportWrite> {
+    session: &'a mut HidSession<T>,
+    scancode: u8,
+    armed: bool,
+}
+
+impl<'a, T: TransportWrite> KbdChordGuard<'a, T> {
+    fn new(session: &'a mut HidSession<T>, _mods: Modifiers, scancode: u8) -> Self {
+        Self {
+            session,
+            scancode,
+            armed: true,
+        }
+    }
+
+    fn session(&mut self) -> &mut HidSession<T> {
+        self.session
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl<T: TransportWrite> Drop for KbdChordGuard<'_, T> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Best-effort modifier release. `scancode` is already up on the
+        // happy path and may or may not be up on the failure path; in
+        // either case this report carries no keys (UP) + cleared mods,
+        // which is the canonical "all clear" state for the keyboard
+        // HID descriptor.
+        let _ = self.session.key(self.scancode, false, Modifiers::empty());
+    }
+}
+
+/// RAII guard for [`HidSession::tap_pointer`] / [`HidSession::swipe_pointer`]
+/// / [`HidSession::multi_finger_tap`].
+///
+/// If the second half of a tap (the `ACTION_UP`) fails after the
+/// `ACTION_DOWN` already landed, Android sees a finger pressed but
+/// never lifted — the next tap is classified as a drag, or the
+/// pointer stays live until the next input. The guard sends an
+/// `ACTION_UP` for every pointer it tracked on `Drop` unless
+/// `disarm()` is called.
+///
+/// Pointer ids are tracked in `Vec` (rather than a `BitSet`) because
+/// `MAX_POINTERS = 10` — a `Vec` is cache-friendly, doesn't need
+/// stack-pinned storage, and the linear scan is cheaper than the
+/// bookkeeping a `BitSet` requires at this size.
+pub(crate) struct TouchGuard<'a, T: TransportWrite> {
+    session: &'a mut HidSession<T>,
+    pressed: Vec<u64>,
+    armed: bool,
+}
+
+impl<'a, T: TransportWrite> TouchGuard<'a, T> {
+    pub(crate) fn new(session: &'a mut HidSession<T>) -> Self {
+        Self {
+            session,
+            pressed: Vec::new(),
+            armed: true,
+        }
+    }
+
+    pub(crate) fn session(&mut self) -> &mut HidSession<T> {
+        self.session
+    }
+
+    /// Record `pointer_id` as pressed (the ACTION_DOWN succeeded) so
+    /// the guard can release it on Drop.
+    pub(crate) fn mark_pressed(&mut self, pointer_id: u64) {
+        self.pressed.push(pointer_id);
+    }
+
+    /// Mark `pointer_id` as released (the matching ACTION_UP succeeded)
+    /// so the guard does not double-release on Drop.
+    pub(crate) fn mark_released(&mut self, pointer_id: u64) {
+        if let Some(pos) = self.pressed.iter().position(|p| *p == pointer_id) {
+            self.pressed.swap_remove(pos);
+        }
+    }
+
+    pub(crate) fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl<T: TransportWrite> Drop for TouchGuard<'_, T> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Release in reverse order so a multi-finger gesture that
+        // started as DOWN on pointers 0..N ends as UP on N-1..0 —
+        // matching what `multi_finger_tap` / `swipe` would have done
+        // on the happy path. Best-effort: a Drop-time rollback
+        // failure must not mask the original error.
+        for &pid in self.pressed.iter().rev() {
+            let _ = self
+                .session
+                .inject_touch(crate::multitouch::ACTION_UP, pid, 0, 0, 0.0);
+        }
+    }
+}
+
 impl<T: TransportWrite> HidSession<T> {
     /// Open the requested devices on `transport`, sending one
     /// `UHID_CREATE` per enabled device. If any `UHID_CREATE` fails,
@@ -353,14 +470,23 @@ impl<T: TransportWrite> HidSession<T> {
     /// 2. `mods` held + `scancode` up (the shortcut has now fired),
     /// 3. modifiers cleared (no keys held).
     ///
+    /// **Stability**: if step 1 or 2 fails the modifier byte is left
+    /// pressed on the device; an LLM that retries the chord with a
+    /// different key would see Ctrl+Shift+arrow. This implementation
+    /// uses a [`KbdChordGuard`] that emits the modifier-release report
+    /// on `Drop` whenever the function bails early.
+    ///
     /// Byte-exact via `UHID_INPUT` on the keyboard descriptor.
     pub fn key_chord(&mut self, mods: Modifiers, scancode: u8) -> Result<()> {
+        let mut guard = KbdChordGuard::new(self, mods, scancode);
         // 1 + 2: tap the key with the modifiers held throughout.
-        self.key(scancode, true, mods)?;
-        self.key(scancode, false, mods)?;
+        guard.session().key(scancode, true, mods)?;
+        guard.session().key(scancode, false, mods)?;
         // 3: release the modifiers. `scancode` is already up, so this
         // report carries no keys and a cleared modifier byte.
-        self.key(scancode, false, Modifiers::empty())
+        guard.session().key(scancode, false, Modifiers::empty())?;
+        guard.disarm();
+        Ok(())
     }
 
     /// Press and release the LEFT mouse button at the absolute screen
@@ -372,12 +498,20 @@ impl<T: TransportWrite> HidSession<T> {
 
     /// Press and release at one absolute coordinate with a typed scrcpy pointer
     /// id.
+    ///
+    /// **Stability**: if `ACTION_UP` fails after `ACTION_DOWN` landed, a
+    /// [`TouchGuard`] sends the missing `ACTION_UP` on Drop so the
+    /// device doesn't see a finger pressed indefinitely.
     pub fn tap_pointer(&mut self, pointer_id: TouchPointerId, x: i32, y: i32) -> Result<()> {
-        let pointer_id = pointer_id.value();
-        let down = self.touch_msg(ACTION_DOWN, pointer_id, x, y, 1.0);
-        self.send(&down)?;
-        let up = self.touch_msg(ACTION_UP, pointer_id, x, y, 0.0);
-        self.send(&up)?;
+        let pid = pointer_id.value();
+        let mut guard = TouchGuard::new(self);
+        let down = guard.session().touch_msg(ACTION_DOWN, pid, x, y, 1.0);
+        guard.session().send(&down)?;
+        guard.mark_pressed(pid);
+        let up = guard.session().touch_msg(ACTION_UP, pid, x, y, 0.0);
+        guard.session().send(&up)?;
+        guard.mark_released(pid);
+        guard.disarm();
         Ok(())
     }
 
@@ -1300,6 +1434,12 @@ impl<T: TransportWrite> HidSession<T> {
     /// hardcoded three-finger screenshot to any accessibility / system
     /// multi-finger gesture. `points` supplies one `(x, y)` per finger;
     /// only the first `fingers` entries are used. Byte-exact.
+    ///
+    /// **Stability**: each successful `ACTION_DOWN` is tracked in a
+    /// local set so that a mid-sequence failure releases every
+    /// already-pressed finger before returning the error. Without this,
+    /// a failure on the 3rd finger of a 4-finger gesture would leave
+    /// pointers 0..2 pressed on the device.
     pub fn multi_finger_tap(&mut self, points: &[(i32, i32)]) -> Result<()> {
         let fingers = points.len();
         if !(2..=crate::multitouch::MAX_POINTERS as usize).contains(&fingers) {
@@ -1308,13 +1448,48 @@ impl<T: TransportWrite> HidSession<T> {
                 crate::multitouch::MAX_POINTERS - 1,
             ));
         }
-        let mut mt = self.multitouch();
-        for (id, &(x, y)) in points.iter().enumerate() {
-            mt.down(id as u64, x, y, 1.0)?;
+        // Local "pressed" set is updated only after each successful
+        // `ACTION_DOWN`. On any error, the unwind sends `ACTION_UP` for
+        // every pressed pointer before returning — best-effort, errors
+        // during cleanup are swallowed so the original error reaches
+        // the caller.
+        let mut pressed: [bool; crate::multitouch::MAX_POINTERS as usize] =
+            [false; crate::multitouch::MAX_POINTERS as usize];
+        let release_all = |session: &mut Self, pressed: &[bool; crate::multitouch::MAX_POINTERS as usize]| {
+            for (id, &p) in pressed.iter().enumerate().rev() {
+                if p {
+                    let _ = session.inject_touch(
+                        crate::multitouch::ACTION_UP,
+                        id as u64,
+                        0,
+                        0,
+                        0.0,
+                    );
+                }
+            }
+        };
+        // Stage 1: press all fingers.
+        let result = (|| -> Result<()> {
+            for (id, &(x, y)) in points.iter().enumerate() {
+                self.inject_touch(crate::multitouch::ACTION_DOWN, id as u64, x, y, 1.0)?;
+                pressed[id] = true;
+            }
+            Ok(())
+        })();
+        if let Err(e) = result {
+            release_all(self, &pressed);
+            return Err(e);
         }
-        // Release in the same order; MultitouchHandle tracks each slot.
-        for id in 0..fingers {
-            mt.up(id as u64)?;
+        // Stage 2: release all fingers.
+        let result = (|| -> Result<()> {
+            for id in 0..fingers {
+                self.inject_touch(crate::multitouch::ACTION_UP, id as u64, 0, 0, 0.0)?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = result {
+            release_all(self, &pressed);
+            return Err(e);
         }
         Ok(())
     }

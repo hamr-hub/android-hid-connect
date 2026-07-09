@@ -12,6 +12,11 @@
 
 ### Added
 
+- **Stability pass (2026-07-09) — RAII rollback guards for mid-sequence failures:**
+  - `KbdChordGuard` wraps `HidSession::key_chord` so that if the modifier-byte + key-tap sequence fails partway through, a final cleared-modifier report is emitted on `Drop` to keep the keyboard HID state consistent. Without the guard a mid-chord failure would leave Ctrl / Shift / Alt pressed on the device, causing the next typed character to render as Ctrl-C / Shift-A.
+  - `TouchGuard` wraps `HidSession::tap_pointer` so that if `ACTION_UP` fails after `ACTION_DOWN` landed, the missing `ACTION_UP` is sent on `Drop` — Android would otherwise see a finger pressed indefinitely and classify the next tap as a drag.
+  - `multi_finger_tap` uses an inline `release_all` cleanup so that a mid-sequence failure (e.g. 4th finger of a 4-finger gesture) releases every already-pressed pointer before returning the first error.
+  - New test file `tests/rollback_guards.rs` (5 tests) covers happy-path byte-exact sequences and failure-injection rollback semantics with a custom `FailingTransport`.
 - **Controllability pass (2026-07-09) — 7 new gesture / control primitives:**
   - `HidSession::drag` (C2) — press-hold-move-dwell-release drag-and-drop, distinct from `swipe`; holds a press at the origin *and* target so launcher/list drag pickup + drop registers.
   - `HidSession::pinch` (C3) — two-finger pinch/zoom centered on a point (`end_radius < start_radius` zooms out, `>` zooms in) via the 10-point `MultitouchHandle`.

@@ -26,6 +26,7 @@ pub use schemars::schema::Schema;
 use crate::action::ActionResult;
 use crate::observation::{ForegroundApp, Observation};
 use crate::plan::Plan;
+use crate::protocol::{ReplyPayload, RequestPayload};
 
 /// Errors from `parse_and_validate`.
 #[derive(Debug, thiserror::Error)]
@@ -76,6 +77,27 @@ pub fn foreground_app_schema() -> schemars::schema::RootSchema {
     static SCHEMA: OnceLock<schemars::schema::RootSchema> = OnceLock::new();
     SCHEMA
         .get_or_init(|| schemars::schema_for!(ForegroundApp))
+        .clone()
+}
+
+/// Compiled `RequestPayload` schema (host → kernel). The single
+/// function-call schema an LLM tool runtime embeds to drive the
+/// daemon — see `Frame::request` for the wire counterpart.
+#[must_use]
+pub fn request_payload_schema() -> schemars::schema::RootSchema {
+    static SCHEMA: OnceLock<schemars::schema::RootSchema> = OnceLock::new();
+    SCHEMA
+        .get_or_init(|| schemars::schema_for!(RequestPayload))
+        .clone()
+}
+
+/// Compiled `ReplyPayload` schema (kernel → host). Use it to
+/// validate the LLM-side mirror of the daemon's reply envelope.
+#[must_use]
+pub fn reply_payload_schema() -> schemars::schema::RootSchema {
+    static SCHEMA: OnceLock<schemars::schema::RootSchema> = OnceLock::new();
+    SCHEMA
+        .get_or_init(|| schemars::schema_for!(ReplyPayload))
         .clone()
 }
 
@@ -135,6 +157,16 @@ mod tests {
     #[test]
     fn atomic_result_schema_compiles() {
         let _ = atomic_result_schema();
+    }
+
+    #[test]
+    fn request_payload_schema_compiles() {
+        let _ = request_payload_schema();
+    }
+
+    #[test]
+    fn reply_payload_schema_compiles() {
+        let _ = reply_payload_schema();
     }
 
     #[test]

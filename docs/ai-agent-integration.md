@@ -71,6 +71,13 @@ loop {
 }
 ```
 
+Remote agents can send the same typed `Action` values through the `adk`
+postcard protocol on port 9008. `Tap`, `Swipe`, `TypeText`, `Key`, `Launch`,
+`SetClipboard`, `GamepadFrame`, and `InjectRaw` are forwarded by `adk` to
+scrcpy's control socket (`--scrcpy-host` / `--scrcpy-port`) so common writes
+keep byte-exact control/UHID bytes even when the LLM talks to the daemon instead
+of embedding the bridge.
+
 ---
 
 ## 3. Prompt contract (per ADR-0012)

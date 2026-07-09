@@ -13,7 +13,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::observation::{DeviceEvent, ForegroundApp, FrameSnapshot, Observation};
+use crate::observation::{DeviceEvent, ForegroundApp, Observation};
 
 /// Egress policy controlling which fields of an `Observation` may
 /// be forwarded to a cloud LLM. JSON-derivable (per ADR 0012) so
@@ -33,9 +33,9 @@ pub struct EgressPolicy {
     pub allow_snapshot: bool,
     /// Allow `Observation.events` (the recent atomic execution log
     /// + lifecycle events) to leave the device. **Default: false**
-    /// because the events list leaks the user's *actions* (not just
-    /// the screen state). The LLM does not need history to make
-    /// forward-planning decisions; it can re-observe on demand.
+    ///   because the events list leaks the user's *actions* (not just
+    ///   the screen state). The LLM does not need history to make
+    ///   forward-planning decisions; it can re-observe on demand.
     pub allow_history: bool,
 }
 
@@ -72,6 +72,8 @@ impl EgressPolicy {
         // 1. history: events list leaks user actions
         if !self.allow_history {
             observation.events.clear();
+        } else {
+            strip_lifecycle_events(&mut observation.events);
         }
         // 2. text: UI tree + foreground app
         if !self.allow_text {
@@ -121,7 +123,8 @@ pub(crate) fn strip_lifecycle_events(events: &mut Vec<DeviceEvent>) {
 /// name. Used by `LlmContext` when only the package (no full
 /// activity) is available — collapses verbose `ForegroundApp` to
 /// the `package` field only.
-pub(crate) fn package_only(app: Option<&ForegroundApp>) -> Option<ForegroundApp> {
+#[must_use]
+pub fn package_only(app: Option<&ForegroundApp>) -> Option<ForegroundApp> {
     app.map(|a| ForegroundApp {
         package: a.package.clone(),
         activity: String::new(),
@@ -133,7 +136,7 @@ pub(crate) fn package_only(app: Option<&ForegroundApp>) -> Option<ForegroundApp>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observation::{A11yTree, DeviceState};
+    use crate::observation::{A11yTree, DeviceState, FrameSnapshot};
 
     fn sample_observation() -> Observation {
         Observation {
@@ -182,8 +185,9 @@ mod tests {
 
     #[test]
     fn deny_all_deny_all_returns_true() {
-        assert!(EgressPolicy::DENY_ALL.is_deny_all());
-        assert!(!EgressPolicy::DENY_ALL.allow_history);
+        let policy = EgressPolicy::DENY_ALL;
+        assert!(policy.is_deny_all());
+        assert!(!policy.allow_history);
     }
 
     #[test]
@@ -239,7 +243,11 @@ mod tests {
             ..EgressPolicy::default()
         };
         p.filter(&mut obs);
-        assert_eq!(obs.events.len(), 3, "history kept when allow_history=true");
+        assert_eq!(obs.events.len(), 2, "non-lifecycle history is kept");
+        assert!(obs
+            .events
+            .iter()
+            .all(|event| !matches!(event, DeviceEvent::Uptime { .. })));
     }
 
     #[test]
@@ -265,9 +273,39 @@ mod tests {
     #[test]
     fn egress_policy_serializes_to_snake_case_json() {
         let p = EgressPolicy::default();
-        let v: serde_json::Value = serde_json::to_value(&p).unwrap();
+        let v: serde_json::Value = serde_json::to_value(p).unwrap();
         assert_eq!(v["allow_text"], true);
         assert_eq!(v["allow_snapshot"], true);
         assert_eq!(v["allow_history"], false);
+    }
+
+    #[test]
+    fn strip_lifecycle_events_removes_uptime_and_config_only() {
+        let mut events = vec![
+            DeviceEvent::Uptime { uptime_ms: 1 },
+            DeviceEvent::ConfigurationChanged,
+            DeviceEvent::SceneChangeDetected { score: 0.7 },
+        ];
+        strip_lifecycle_events(&mut events);
+        assert_eq!(
+            events,
+            vec![DeviceEvent::SceneChangeDetected { score: 0.7 }]
+        );
+    }
+
+    #[test]
+    fn package_only_drops_activity_but_keeps_focus_metadata() {
+        let app = ForegroundApp {
+            package: "com.example".into(),
+            activity: ".Main".into(),
+            focused: true,
+            since_ms: 123,
+        };
+        let compact = package_only(Some(&app)).expect("app");
+        assert_eq!(compact.package, "com.example");
+        assert_eq!(compact.activity, "");
+        assert!(compact.focused);
+        assert_eq!(compact.since_ms, 123);
+        assert_eq!(package_only(None), None);
     }
 }

@@ -17,8 +17,8 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::ids::PlanId;
 use crate::plan::Plan;
@@ -66,7 +66,9 @@ pub enum ScenarioKind {
 /// (library is in-memory; reloaded on each process start).
 static SCENARIO_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ScenarioId(pub u64);
 
 impl ScenarioId {
@@ -201,9 +203,9 @@ impl ScenarioLibrary {
         const ALPHA: f32 = 0.1;
         if success {
             entry.success_rate = entry.success_rate * (1.0 - ALPHA) + ALPHA;
-            entry.miss_rate = entry.miss_rate * (1.0 - ALPHA);
+            entry.miss_rate *= 1.0 - ALPHA;
         } else {
-            entry.success_rate = entry.success_rate * (1.0 - ALPHA);
+            entry.success_rate *= 1.0 - ALPHA;
             entry.miss_rate = entry.miss_rate * (1.0 - ALPHA) + ALPHA;
         }
         entry.use_count += 1;
@@ -322,7 +324,10 @@ mod tests {
             lib.record_success(plan.id, i);
         }
         let promoted = lib.promote_if_ready(plan.id);
-        assert!(promoted.is_none(), "insufficient use_count must block promote");
+        assert!(
+            promoted.is_none(),
+            "insufficient use_count must block promote"
+        );
     }
 
     #[test]
@@ -360,7 +365,11 @@ mod tests {
         // Touch all entries' last_used to make the OLDEST be first
         // (i.e. not bump any)
         // Add a new one
-        let new_id = lib.add(ScenarioKind::Template, sample_plan(MAX_LIBRARY_SIZE as u64), 1000);
+        let new_id = lib.add(
+            ScenarioKind::Template,
+            sample_plan(MAX_LIBRARY_SIZE as u64),
+            1000,
+        );
         // First should be evicted (last_used_at_ms = 0)
         assert!(!lib.entries.contains_key(&first_id));
         assert!(lib.entries.contains_key(&new_id));

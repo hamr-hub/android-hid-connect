@@ -84,7 +84,7 @@ impl LLMProvider for StubLLM {
         let mut iter = self
             .scripts
             .get(&task.id)
-            .map(|v| v.iter().cloned().collect::<Vec<_>>())
+            .map(|v| v.to_vec())
             .unwrap_or_default()
             .into_iter();
         // Round-robin: we want the **next** action, so we keep
@@ -96,22 +96,6 @@ impl LLMProvider for StubLLM {
     fn name(&self) -> &'static str {
         "stub"
     }
-}
-
-/// Wire-protocol helpers (mirrored from `protocol_tcp_round_trip.rs`).
-fn varint(n: usize) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut n = n;
-    loop {
-        let b = (n & 0x7F) as u8;
-        n >>= 7;
-        if n == 0 {
-            out.push(b);
-            break;
-        }
-        out.push(b | 0x80);
-    }
-    out
 }
 
 fn read_frame(sock: &mut TcpStream) -> std::io::Result<(Verb, FrameFlags, Vec<u8>)> {

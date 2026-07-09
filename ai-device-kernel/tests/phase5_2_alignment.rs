@@ -319,7 +319,6 @@ fn a11y_node_diff_serializes_change_kind_as_snake_case() {
 
 #[test]
 fn action_schema_compiles() {
-    use schemars::JsonSchema;
     let mut gen = schemars::gen::SchemaGenerator::default();
     let _ = gen.subschema_for::<Action>();
 }

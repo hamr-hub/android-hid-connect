@@ -221,6 +221,9 @@ let _ = low_latency_session.set_sticks_raw(1000, 200, -800, -1000, 0, 16384); //
 // in one command:
 let raw_frame = [0u8; 15];
 let _ = low_latency_session.set_frame_raw_packed(&raw_frame)?;
+// Descriptor-aware callers can also send shorter raw UHID reports directly;
+// this is the same hot path used by ai-device-kernel's Action::InjectRaw.
+let _ = low_latency_session.inject_raw_gamepad_report(&raw_frame[..4])?;
 let packed = android_hid_connect::session::GamepadFrameRaw::new(
     android_hid_connect::GamepadButton::South as u32,
     -3000,
@@ -868,6 +871,9 @@ best starting point:
 - Prefer `set_frame_raw_packed_batch` when you can emit packed
   15-byte reports, or `set_frame_raw_batch_unchecked` when you only
   have normalized fields.
+- Use `inject_raw_gamepad_report` only when your agent already owns the
+  descriptor-aware UHID report bytes and needs the `Action::InjectRaw`
+  escape hatch for game/canvas/WebView controls.
 - If you already keep packed frames in a fixed `[[u8; 15]; 32]`
   ring, use `send_frame_packed_batch_fixed` to keep the command hot
   path allocation-free.

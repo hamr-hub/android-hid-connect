@@ -89,10 +89,7 @@ and middleware-level decision. Read in order for full context:
 
 ## Baselines
 
-- [`v3-phase1-acceptance-2026-06-30.md`](baselines/v3-phase1-acceptance-2026-06-30.md) — Phase 1 acceptance (AC source of truth)
-- [`v3-phase6-baseline-2026-06-30.md`](baselines/v3-phase6-baseline-2026-06-30.md) — Phase 6 baseline (latest AI middleware baseline)
 - [`v3-phase6-latency-2026-06-30.md`](baselines/v3-phase6-latency-2026-06-30.md) — Phase 6 latency profile (kernel-internal vs host-adb)
-- [`v3-acceptance-all-phases-2026-06-30.md`](baselines/v3-acceptance-all-phases-2026-06-30.md) — full multi-phase acceptance roll-up
 - 2 × `v3-phase6-sm-g9910-*.png` — real-device screenshots
 
 ---

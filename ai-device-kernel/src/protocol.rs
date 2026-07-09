@@ -42,6 +42,7 @@
 //!   legacy verbs become internal capabilities behind
 //!   [`crate::capability`].
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, ActionResult};
@@ -184,7 +185,7 @@ impl std::ops::BitOrAssign for FrameFlags {
 
 /// Request payloads keyed by [`Verb`]. Defined as a single enum
 /// so postcard has a consistent tag for the request frame.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum RequestPayload {
     /// `Verb::Action` payload.
     Action {
@@ -244,7 +245,7 @@ impl RequestPayload {
 /// Reply payloads keyed by [`Verb`]. Defined as a single enum so
 /// postcard encoding matches `RequestPayload`'s shape (the daemon
 /// can dispatch with one tag byte).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum ReplyPayload {
     /// `Action` reply.
     Action(ActionResult),
@@ -409,7 +410,7 @@ fn encode_varint(buf: &mut Vec<u8>, mut n: usize) {
 
 /// Decode an unsigned varint at the start of `buf`. Returns
 /// `(value, bytes_consumed)` or `None` if the varint is truncated.
-fn decode_varint(buf: &[u8]) -> Option<(usize, usize)> {
+pub fn decode_varint(buf: &[u8]) -> Option<(usize, usize)> {
     let mut result: usize = 0;
     let mut shift = 0;
     for (i, b) in buf.iter().enumerate() {

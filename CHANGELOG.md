@@ -12,17 +12,36 @@
 
 ### Added
 
+- **Controllability pass (2026-07-09) — 7 new gesture / control primitives:**
+  - `HidSession::drag` (C2) — press-hold-move-dwell-release drag-and-drop, distinct from `swipe`; holds a press at the origin *and* target so launcher/list drag pickup + drop registers.
+  - `HidSession::pinch` (C3) — two-finger pinch/zoom centered on a point (`end_radius < start_radius` zooms out, `>` zooms in) via the 10-point `MultitouchHandle`.
+  - `HidSession::key_chord` (C4) — modifier key-chords (Ctrl+A / Ctrl+C / Ctrl+V / Ctrl+Z …) that hold the modifier byte across the key tap then clear it; a bare `key()` couldn't express this.
+  - `HidSession::multi_finger_tap` (C7) — generic N-finger (2–10) simultaneous tap, generalizing the hardcoded `three_finger_screenshot` to any accessibility / system multi-finger gesture.
+  - Adaptive swipe step density (C5) — the bridge `swipe` now floors sample count by geometric distance (1 sample / ~40 px, capped at 256) as well as duration, so fast long flings stay dense enough for on-device velocity/fling recognition.
+  - Precise `AtomicErrorCode` mapping (C6) — `BridgeOutcome` gains a typed `code` field + `retryable()`; the bridge classifies `android_hid_connect::Error` into `permission_denied` (payload-too-large / bad scancode), `not_implemented` (closed session / device not open), `timeout`, or `kernel_error` (transport) instead of collapsing every failure to `KernelError`. `adk`'s `action_result_from_bridge` propagates the precise code + retryable flag.
 - `ai-device-kernel/src/bridge.rs` — typed `Action` → byte-exact UHID execution path (`ActionInjector::apply`)
+- `HidSession::inject_raw_gamepad_report` + `Action::InjectRaw` bridge support for byte-exact game/canvas/WebView UHID escape hatches.
+- `adk --scrcpy-host/--scrcpy-port` lazy byte-exact bridge so remote protocol clients execute `Tap`, `Swipe`, `TypeText`, `Key`, `Launch`, `SetClipboard`, `Action::InjectRaw`, and `Action::GamepadFrame` through scrcpy's control socket instead of `adb shell input` / shell clipboard fallbacks.
 - `ai-device-kernel/src/bin/adk-bench.rs` — in-process micro-bench (CI gate, p99 < 5 ms)
 - `docs/adr/0015-ai-middleware-consolidation.md` — 2026-07-01 workspace consolidation decision
+- `ai_device_kernel::json::request_payload_schema()` + `reply_payload_schema()` — the canonical LLM function-call schemas for the 4-verb wire surface. Generated from the same `schemars::JsonSchema` derives as the runtime types, so the LLM tool definition stays in lockstep with the daemon.
+- `ai_device_kernel::protocol::decode_varint` made `pub` so callers can decode the LEB128 varint length prefix without duplicating the algorithm.
 
 ### Changed
 
+- **Performance pass (2026-07-09) — 4 hot-path optimizations (all byte-exact-verified):**
+  - P1: `adk` opens the scrcpy UHID bridge with coalescing enabled (1 ms window + trailing `flush_now`) instead of direct mode — a swipe's ~N `INJECT_TOUCH_EVENT` messages now leave as **1 write syscall** instead of N, with identical wire bytes and end-to-end latency.
+  - P2: `ActionInjector::apply_many` stages a whole action chunk into the batcher and lands it in a **single terminal flush** (N actions = 1 flush instead of N), via a `batch_depth` guard on the per-action helpers.
+  - P3: `HidSession::swipe_pointer` hoists the loop-invariant int→f32 casts out of the interpolation hot loop; the per-step `base + delta * (i / steps)` expression is unchanged so the `.round()` output is byte-identical (guarded by a new golden-coordinate test).
+  - P4: `apply_many` returns `Option<usize>` (the first-failure **index**) instead of a cloned `String`-carrying `BridgeOutcome`, matching the existing `PlanResult::first_failure` idiom — zero-alloc failure reporting.
 - **AI middleware consolidation (ADR-0015)** — workspace reduced from 7 crates to 3 crates + 1 binary. `ai-device-kernel` is THE AI façade (single binary `adk`, single port 9008, single protocol postcard/4-verb). Root crate `Cargo.toml` description rewritten to reflect AI middleware positioning. `src/agent/` removed from root crate. `AGENTS.md` §1 + §2.1 + §2.6 + §2.7 + §4.2 updated to reflect the 3-crate workspace.
 - `docs/architecture.md` — rewritten to show the consolidated 3-crate layering + bridge module.
 - `docs/ai-agent-integration.md` — rewritten around `ActionInjector::apply` (replaces `AgentControlSession` examples).
-- `docs/development.md` — added `adk-bench` section; cargo commands updated.
+- `docs/development.md` — added `adk-bench` section; cargo commands updated; real-device E2E section now points to `examples/live_e2e.rs`.
 - `docs/INDEX.md` — rewritten around the 3-crate workspace + 15 ADRs.
+- `RequestPayload` / `ReplyPayload` (the 4-verb wire surface) now derive `JsonSchema` so LLM function-call tool definitions can be generated directly from the runtime types.
+- `adk::read_request` refactored to reuse `protocol::decode_varint` instead of carrying a private O(N²) re-implementation of the LEB128 decoder. One canonical decoder shared with the writer side.
+- **Cleanup pass (2026-07-08)** — deleted ~1.6 kLOC of dead code, three duplicate AI-integration docs, and three non-essential examples. See "Removed" below.
 
 ### Removed
 
@@ -36,9 +55,17 @@
 - `docs/comparison-with-handsets.md`
 - `docs/adr/0006-plan-wire-format-is-json.md` (superseded by ADR-0012)
 - `docs/baselines/v3-phase{2,3,4,5.1,5-6-7}-*` (intermediate baselines; phase 1 + phase 6 retained)
+- `docs/agent-integration-recipe.md` (duplicate of `ai-agent-integration.md`)
+- `docs/grill-master-summary-2026-07-01.md` (session artifact)
+- `docs/baselines/v3-phase1-acceptance-2026-06-30.md`, `v3-phase6-baseline-2026-06-30.md`, `v3-acceptance-all-phases-2026-06-30.md` (rolled into the latency baseline)
+- `examples/e2e_full_intent.rs` (1025 LOC, duplicates `live_e2e.rs`)
+- `examples/e2e_llm_agent.py` (461 LOC, Python — the project is pure Rust; superseded by the `adk` binary + `adk-bench`)
+- `examples/live_autoglm_benchmark.rs` (very specific Kuaishou AutoGLM benchmark, not the middleware itself)
+- `ai-device-kernel/src/bin/adk.rs` — deleted dead code from the pre-ADR-0015 selector-resolution path: `adb_uiautomator_dump`, `structured_action_failure`, `ResolvedSelector`, `SelectorResolveError`, `resolve_selector_from_dump`, `selector_query`, `bracket_value`, `selector_matches_node`, `node_center`, `parse_bounds`, `xml_attr`. None were called after the consolidation; 11 dead-code warnings → 0.
 
 ### Fixed
 
+- **Bridge `TypeText` typed uppercase as lowercase (C1)** — `ai-device-kernel`'s bridge `type_text` used a private `ascii_to_scancode` subset that emitted the `A-Z` scancode with **no Shift modifier** (so `"Hello"` typed `"hello"`) and rejected newline / tab / the whole symbol row as `not_implemented`. Now delegates to the canonical `Scancode::try_from_char`, which is full US-QWERTY: sets `LSHIFT` for uppercase + shifted symbols and covers `\n` / `\t` / `!@#$%…`. Guarded by a byte-exact test asserting `'A'` carries the LSHIFT modifier byte. The buggy `ascii_to_scancode` helper was deleted.
 - `ai-device-kernel` `Plan`/`PlanStep`/`PlanResult`/`StepResult` now derive `JsonSchema` (was a hidden compile error in the existing uncommitted edits; ADR-0012 wires through `Plan::version`).
 
 ### Migration

@@ -54,7 +54,7 @@ fn gamepad_ring_fifo_in_order_at_capacity() {
     // once, in FIFO order, across the full ring capacity.
     let ring = GamepadFrameRing::new();
     for i in 0..RING_CAPACITY as u64 {
-        ring.push(frame(i as u64)).expect("within capacity");
+        ring.push(frame(i)).expect("within capacity");
     }
     // Drain — every seq appears exactly once, in order.
     for expected in 0..RING_CAPACITY as u64 {

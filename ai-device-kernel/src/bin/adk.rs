@@ -21,6 +21,7 @@
 //! ```text
 //! adk [--port 9008] [--device R5CR70SRPSD] [--no-adb]
 //!     [--state-db /tmp/adk-state.db]
+//!     [--scrcpy-host 127.0.0.1] [--scrcpy-port 27183]
 //! ```
 //!
 //! ## AC coverage (this binary)
@@ -57,11 +58,15 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ai_device_kernel::{
-    A11yNodeChangeKind, A11yNodeDiff, A11yTree, Action, ActionId, ActionResult, DeviceEvent,
-    DeviceState, Frame, FrameFlags, FrameSnapshot, GroundTruth, Memory, Observation,
-    ObservationComponent, PlanResult, ReplyPayload, RequestPayload, StateModel, StepResult,
-    StreamEngine, SubscriberHandle, UiReprClass, UiReprHtml, UiReprNode, Verb,
+    A11yNodeChangeKind, A11yNodeDiff, A11yTree, Action, ActionId, ActionInjector, ActionResult,
+    AtomicErrorCode, BridgeOutcome, DeviceEvent, DeviceState, Frame, FrameFlags, FrameSnapshot,
+    GroundTruth, Memory, Observation, ObservationComponent, PlanResult, ReplyPayload,
+    RequestPayload, StateModel, StepResult, StreamEngine, SubscriberHandle, UiReprClass,
+    UiReprHtml, UiReprNode, Verb,
 };
+use android_hid_connect::device::read_scrcpy_control_prefix;
+use android_hid_connect::session::OpenRequest;
+use android_hid_connect::transport::open_tcp;
 
 // ---------------------------------------------------------------------------
 // Monotonic observation seq counter (process-wide) — AC-V3-2.1
@@ -86,6 +91,8 @@ struct SharedState {
     /// Optional SQLite connection for memory persistence.
     sqlite: Mutex<Option<rusqlite::Connection>>,
     sqlite_path: Option<PathBuf>,
+    /// Lazy byte-exact scrcpy UHID bridge for raw/gamepad actions.
+    raw_injector: Mutex<Option<ActionInjector<TcpStream>>>,
     started_ms: u64,
 }
 
@@ -112,6 +119,7 @@ impl SharedState {
             memory: Mutex::new(mem),
             sqlite: Mutex::new(sqlite),
             sqlite_path,
+            raw_injector: Mutex::new(None),
             started_ms,
         })
     }
@@ -156,6 +164,8 @@ struct Flags {
     device: Option<String>,
     no_adb: bool,
     state_db: Option<PathBuf>,
+    scrcpy_host: String,
+    scrcpy_port: u16,
 }
 
 impl Flags {
@@ -164,6 +174,8 @@ impl Flags {
         let mut device = std::env::var("ADB_SERIAL").ok();
         let mut no_adb = false;
         let mut state_db = None;
+        let mut scrcpy_host = "127.0.0.1".to_string();
+        let mut scrcpy_port = 27183u16;
         let args: Vec<String> = std::env::args().collect();
         let mut i = 1;
         while i < args.len() {
@@ -184,6 +196,14 @@ impl Flags {
                     state_db = Some(PathBuf::from(&args[i + 1]));
                     i += 2;
                 }
+                "--scrcpy-host" if i + 1 < args.len() => {
+                    scrcpy_host = args[i + 1].clone();
+                    i += 2;
+                }
+                "--scrcpy-port" if i + 1 < args.len() => {
+                    scrcpy_port = args[i + 1].parse().expect("--scrcpy-port <u16>");
+                    i += 2;
+                }
                 other => {
                     eprintln!("unknown arg: {other}");
                     std::process::exit(2);
@@ -195,6 +215,8 @@ impl Flags {
             device,
             no_adb,
             state_db,
+            scrcpy_host,
+            scrcpy_port,
         }
     }
 }
@@ -252,6 +274,97 @@ fn adb_screencap(flags: &Flags) -> Result<Vec<u8>, String> {
         return Err("empty screencap".into());
     }
     Ok(output.stdout)
+}
+
+fn ensure_raw_injector<'a>(
+    flags: &Flags,
+    shared: &'a SharedState,
+) -> Result<std::sync::MutexGuard<'a, Option<ActionInjector<TcpStream>>>, String> {
+    let mut guard = shared.raw_injector.lock().unwrap();
+    if guard.is_none() {
+        if flags.no_adb {
+            return Err("raw UHID injection is disabled in --no-adb mode".into());
+        }
+        let mut stream = open_tcp(&flags.scrcpy_host, flags.scrcpy_port).map_err(|e| {
+            format!(
+                "connect scrcpy control socket {}:{} failed: {e}; run adb forward tcp:{} localabstract:scrcpy and start scrcpy-server control=true",
+                flags.scrcpy_host, flags.scrcpy_port, flags.scrcpy_port
+            )
+        })?;
+        read_scrcpy_control_prefix(&mut stream)
+            .map_err(|e| format!("read scrcpy control prefix failed: {e}"))?;
+        *guard = Some(
+            ActionInjector::open(
+                stream,
+                OpenRequest {
+                    kbd: true,
+                    mouse: false,
+                    gamepad: true,
+                    // P1: coalesce intra-action UHID messages into one
+                    // write_all. Every bridge helper calls flush_now()
+                    // immediately after building its messages, so the
+                    // 1 ms window never actually delays a landed action
+                    // — but a swipe's ~N touch reports now leave as a
+                    // single syscall instead of N. End-to-end latency
+                    // is unchanged; syscall count drops N→1.
+                    coalesce: true,
+                    coalesce_window: Duration::from_millis(1),
+                    coalesce_hard_limit: 4096,
+                },
+            )
+            .map_err(|e| format!("open UHID action bridge failed: {e}"))?,
+        );
+    }
+    Ok(guard)
+}
+
+fn execute_raw_bridge_action(
+    action: &Action,
+    flags: &Flags,
+    shared: &SharedState,
+    id: ActionId,
+) -> BridgeOutcome {
+    match ensure_raw_injector(flags, shared) {
+        Ok(mut guard) => {
+            let mut outcome = guard
+                .as_mut()
+                .expect("raw injector initialized")
+                .apply(action);
+            outcome.id = id;
+            outcome
+        }
+        Err(reason) => BridgeOutcome {
+            id,
+            landed: false,
+            elapsed: Duration::ZERO,
+            error: Some(format!(
+                "{}: {reason}",
+                AtomicErrorCode::KernelError.as_str()
+            )),
+            code: Some(AtomicErrorCode::KernelError),
+        },
+    }
+}
+
+fn action_result_from_bridge(outcome: BridgeOutcome) -> ActionResult {
+    // Propagate the bridge's precise typed code (payload-too-large →
+    // permission_denied, closed session → not_implemented, transport
+    // hiccup → kernel_error) instead of collapsing every failure to
+    // KernelError. `retryable` follows the code, not just `!landed`.
+    let retryable = outcome.retryable();
+    let code = if outcome.landed {
+        None
+    } else {
+        Some(outcome.code.unwrap_or(AtomicErrorCode::KernelError))
+    };
+    ActionResult {
+        id: outcome.id,
+        landed: outcome.landed,
+        ground_truth: GroundTruth::default(),
+        elapsed_ms: outcome.elapsed.as_millis() as u32,
+        code,
+        retryable,
+    }
 }
 
 fn parse_focused_app(dumpsys_output: &str) -> Option<String> {
@@ -368,6 +481,13 @@ fn build_ui_repr_html(focused_app: Option<&str>, dumpsys_text: &str) -> UiReprHt
 fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> ActionResult {
     let start = Instant::now();
     let seq = next_obs_seq();
+    let action_id = ActionId(seq);
+
+    if uses_scrcpy_bridge(action) {
+        return action_result_from_bridge(execute_raw_bridge_action(
+            action, flags, shared, action_id,
+        ));
+    }
 
     let (landed, ground_truth, _err): (bool, GroundTruth, Option<String>) = match action {
         Action::Tap {
@@ -425,7 +545,7 @@ fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> 
         } => {
             if !text.is_ascii() {
                 return ActionResult {
-                    id: ActionId(seq),
+                    id: action_id,
                     landed: false,
                     ground_truth: GroundTruth::default(),
                     elapsed_ms: start.elapsed().as_millis() as u32,
@@ -435,28 +555,6 @@ fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> 
             let cmd = format!("input text {text}");
             match adb_shell(flags, &cmd) {
                 Ok(_) => (true, GroundTruth::default(), None),
-                Err(e) => (false, GroundTruth::default(), Some(e)),
-            }
-        }
-        Action::Launch {
-            target,
-            by: _,
-            deadline_ms: _,
-        } => {
-            let cmd = format!("am start -n {target}");
-            match adb_shell(flags, &cmd) {
-                Ok(out) => {
-                    let top = out.lines().next().unwrap_or("").to_string();
-                    (
-                        true,
-                        GroundTruth {
-                            focus: Some(top.len() as u32),
-                            scene_change: 0.8,
-                            ..Default::default()
-                        },
-                        None,
-                    )
-                }
                 Err(e) => (false, GroundTruth::default(), Some(e)),
             }
         }
@@ -540,10 +638,7 @@ fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> 
             GroundTruth::default(),
             Some("GUI-Owl VQA not yet integrated (env-blocked: weights + NDK)".into()),
         ),
-        Action::TapSelector { .. }
-        | Action::GamepadFrame { .. }
-        | Action::SetClipboard { .. }
-        | Action::InjectRaw { .. } => (
+        Action::TapSelector { .. } => (
             false,
             GroundTruth::default(),
             Some(format!(
@@ -551,6 +646,12 @@ fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> 
                 action.kind_label()
             )),
         ),
+        Action::Launch { .. }
+        | Action::SetClipboard { .. }
+        | Action::GamepadFrame { .. }
+        | Action::InjectRaw { .. } => {
+            unreachable!("raw UHID actions return before adb-shell dispatch")
+        }
     };
 
     let elapsed_ms = start.elapsed().as_millis() as u32;
@@ -574,9 +675,9 @@ fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> 
         }
         let mut state = shared.state.lock().unwrap();
         state.record_action_result(
-            ActionId(seq),
+            action_id,
             ActionResult {
-                id: ActionId(seq),
+                id: action_id,
                 landed,
                 ground_truth: ground_truth.clone(),
                 elapsed_ms,
@@ -587,7 +688,7 @@ fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> 
     let _ = ground_truth.events; // keep import live for future event push
 
     ActionResult {
-        id: ActionId(seq),
+        id: action_id,
         landed,
         ground_truth,
         elapsed_ms,
@@ -595,15 +696,38 @@ fn execute_action(action: &Action, flags: &Flags, shared: &Arc<SharedState>) -> 
     }
 }
 
+fn uses_scrcpy_bridge(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Tap { .. }
+            | Action::Swipe { .. }
+            | Action::TypeText { .. }
+            | Action::Key { .. }
+            | Action::Launch { .. }
+            | Action::SetClipboard { .. }
+            | Action::GamepadFrame { .. }
+            | Action::InjectRaw { .. }
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Wire framing helpers
 // ---------------------------------------------------------------------------
 
 fn read_request(sock: &mut TcpStream) -> std::io::Result<RequestPayload> {
+    use ai_device_kernel::protocol::decode_varint;
+
     let mut header = [0u8; 2];
     sock.read_exact(&mut header)?;
-    let verb_byte = header[0];
+    let verb = Verb::from_byte(header[0]).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "unknown verb")
+    })?;
     let _flags = FrameFlags::from_bits(header[1]);
+
+    // Read the unsigned LEB128 varint length byte-by-byte. We use the
+    // shared `decode_varint` helper so the algorithm stays in lockstep
+    // with `Frame::encode` — keeping one canonical decoder avoids
+    // drift between the writer and reader.
     let mut len_buf = [0u8; 10];
     let mut len_len = 0usize;
     let payload_len: usize = loop {
@@ -611,18 +735,7 @@ fn read_request(sock: &mut TcpStream) -> std::io::Result<RequestPayload> {
         sock.read_exact(&mut one)?;
         len_buf[len_len] = one[0];
         len_len += 1;
-        let mut value: usize = 0;
-        let mut shift = 0;
-        for byte in &len_buf[..len_len] {
-            let cont = byte & 0x80 != 0;
-            let chunk = (byte & 0x7F) as usize;
-            value |= chunk << shift;
-            shift += 7;
-            if !cont {
-                break;
-            }
-        }
-        if one[0] & 0x80 == 0 {
+        if let Some((value, _consumed)) = decode_varint(&len_buf[..len_len]) {
             break value;
         }
         if len_len >= 10 {
@@ -632,21 +745,11 @@ fn read_request(sock: &mut TcpStream) -> std::io::Result<RequestPayload> {
             ));
         }
     };
+
     let mut payload = vec![0u8; payload_len];
     sock.read_exact(&mut payload)?;
     let frame = Frame {
-        verb: match verb_byte {
-            0x01 => Verb::Action,
-            0x02 => Verb::Plan,
-            0x03 => Verb::Observe,
-            0x04 => Verb::Query,
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "unknown verb",
-                ))
-            }
-        },
+        verb,
         flags: FrameFlags::default(),
         payload,
     };
@@ -846,7 +949,8 @@ fn handle_connection(
                 }
                 results.push(step_record);
 
-                if plan.checkpoint_every > 0 && (results.len() as u32) % plan.checkpoint_every == 0
+                if plan.checkpoint_every > 0
+                    && (results.len() as u32).is_multiple_of(plan.checkpoint_every)
                 {
                     let ckpt_obs = build_observation(&flags, &shared);
                     let mut f = Frame::reply(&ReplyPayload::Observation(ckpt_obs));
@@ -945,4 +1049,238 @@ fn main() -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+    use std::sync::mpsc;
+
+    const TAG_UHID_CREATE: u8 = 12;
+    const TAG_UHID_INPUT: u8 = 13;
+    const TAG_TOUCH: u8 = 2;
+
+    fn fake_flags(addr: SocketAddr) -> Flags {
+        Flags {
+            port: 0,
+            device: None,
+            no_adb: false,
+            state_db: None,
+            scrcpy_host: addr.ip().to_string(),
+            scrcpy_port: addr.port(),
+        }
+    }
+
+    fn split_control_messages(bytes: &[u8]) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            let Some(len) = control_message_len(&bytes[i..]) else {
+                break;
+            };
+            out.push(bytes[i..i + len].to_vec());
+            i += len;
+        }
+        out
+    }
+
+    fn control_message_len(bytes: &[u8]) -> Option<usize> {
+        match *bytes.first()? {
+            0 => Some(14),
+            TAG_TOUCH => Some(32),
+            9 => {
+                let text_len = u32::from_be_bytes([
+                    *bytes.get(10)?,
+                    *bytes.get(11)?,
+                    *bytes.get(12)?,
+                    *bytes.get(13)?,
+                ]) as usize;
+                Some(14 + text_len)
+            }
+            TAG_UHID_CREATE => {
+                let name_len = *bytes.get(7)? as usize;
+                let desc_len_idx = 8 + name_len;
+                let desc_len =
+                    u16::from_be_bytes([*bytes.get(desc_len_idx)?, *bytes.get(desc_len_idx + 1)?])
+                        as usize;
+                Some(10 + name_len + desc_len)
+            }
+            TAG_UHID_INPUT => {
+                let size = u16::from_be_bytes([*bytes.get(3)?, *bytes.get(4)?]) as usize;
+                Some(5 + size)
+            }
+            14 => Some(3),
+            16 => Some(2 + *bytes.get(1)? as usize),
+            _ => None,
+        }
+    }
+
+    fn spawn_fake_scrcpy() -> (SocketAddr, mpsc::Receiver<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake scrcpy");
+        let addr = listener.local_addr().expect("addr");
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept fake scrcpy");
+            sock.write_all(&[0]).expect("dummy byte");
+            sock.write_all(&[0; 64]).expect("device name");
+            let mut bytes = Vec::new();
+            sock.read_to_end(&mut bytes).expect("read control bytes");
+            tx.send(bytes).expect("send bytes");
+        });
+        (addr, rx)
+    }
+
+    fn run_with_fake_scrcpy(action: Action) -> (ActionResult, Vec<Vec<u8>>) {
+        let (addr, rx) = spawn_fake_scrcpy();
+        let flags = fake_flags(addr);
+        let shared = SharedState::new(None);
+        let result = execute_action(&action, &flags, &shared);
+        drop(shared);
+        let bytes = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("fake scrcpy captured bytes");
+        (result, split_control_messages(&bytes))
+    }
+
+    fn uhid_inputs(messages: &[Vec<u8>]) -> Vec<&[u8]> {
+        messages
+            .iter()
+            .filter(|msg| msg[0] == TAG_UHID_INPUT)
+            .map(Vec::as_slice)
+            .collect()
+    }
+
+    #[test]
+    fn execute_inject_raw_uses_scrcpy_control_socket() {
+        let payload = vec![0x11, 0x22, 0x33, 0x44];
+        let (result, messages) = run_with_fake_scrcpy(Action::InjectRaw {
+            bytes: payload.clone(),
+            deadline_ms: 100,
+        });
+
+        assert!(result.landed);
+        assert_eq!(result.code, None);
+        let inputs = uhid_inputs(&messages);
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(u16::from_be_bytes([inputs[0][1], inputs[0][2]]), 3);
+        assert_eq!(u16::from_be_bytes([inputs[0][3], inputs[0][4]]), 4);
+        assert_eq!(&inputs[0][5..], payload.as_slice());
+    }
+
+    #[test]
+    fn execute_tap_uses_scrcpy_touch_events() {
+        let (result, messages) = run_with_fake_scrcpy(Action::Tap {
+            x: 123,
+            y: 456,
+            deadline_ms: 100,
+        });
+
+        assert!(result.landed);
+        let touches: Vec<_> = messages.iter().filter(|msg| msg[0] == TAG_TOUCH).collect();
+        assert_eq!(touches.len(), 2);
+        assert_eq!(touches[0][1], 0);
+        assert_eq!(touches[1][1], 1);
+        assert_eq!(
+            i32::from_be_bytes(touches[0][10..14].try_into().unwrap()),
+            123
+        );
+        assert_eq!(
+            i32::from_be_bytes(touches[0][14..18].try_into().unwrap()),
+            456
+        );
+    }
+
+    #[test]
+    fn execute_key_uses_scrcpy_keycode_events() {
+        let (result, messages) = run_with_fake_scrcpy(Action::Key {
+            code: 4,
+            deadline_ms: 100,
+        });
+
+        assert!(result.landed);
+        let key_events: Vec<_> = messages.iter().filter(|msg| msg[0] == 0).collect();
+        assert_eq!(key_events.len(), 2);
+        assert_eq!(key_events[0][1], 0);
+        assert_eq!(key_events[1][1], 1);
+        assert_eq!(
+            u32::from_be_bytes(key_events[0][2..6].try_into().unwrap()),
+            4
+        );
+    }
+
+    #[test]
+    fn execute_type_text_uses_keyboard_uhid_inputs() {
+        let (result, messages) = run_with_fake_scrcpy(Action::TypeText {
+            text: "a0".into(),
+            deadline_ms: 100,
+        });
+
+        assert!(result.landed);
+        let inputs = uhid_inputs(&messages);
+        assert_eq!(inputs.len(), 4);
+        assert_eq!(u16::from_be_bytes([inputs[0][1], inputs[0][2]]), 1);
+        assert_eq!(u16::from_be_bytes([inputs[0][3], inputs[0][4]]), 8);
+        assert_eq!(inputs[0][7], 0x04);
+        assert_eq!(inputs[2][7], 0x27);
+    }
+
+    #[test]
+    fn execute_launch_uses_scrcpy_start_app() {
+        let target = "com.android.settings";
+        let (result, messages) = run_with_fake_scrcpy(Action::Launch {
+            target: target.into(),
+            by: ai_device_kernel::LaunchBy::Package(target.into()),
+            deadline_ms: 100,
+        });
+
+        assert!(result.landed);
+        let launches: Vec<_> = messages.iter().filter(|msg| msg[0] == 16).collect();
+        assert_eq!(launches.len(), 1);
+        assert_eq!(launches[0][1], target.len() as u8);
+        assert_eq!(&launches[0][2..], target.as_bytes());
+    }
+
+    #[test]
+    fn execute_set_clipboard_uses_scrcpy_set_clipboard() {
+        let (result, messages) = run_with_fake_scrcpy(Action::SetClipboard {
+            text: "hello".into(),
+            paste: true,
+            deadline_ms: 100,
+        });
+
+        assert!(result.landed);
+        let frames: Vec<_> = messages.iter().filter(|msg| msg[0] == 9).collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(&frames[0][1..9], &[0; 8]);
+        assert_eq!(frames[0][9], 1);
+        assert_eq!(u32::from_be_bytes(frames[0][10..14].try_into().unwrap()), 5);
+        assert_eq!(&frames[0][14..], b"hello");
+    }
+
+    #[test]
+    fn execute_inject_raw_no_adb_is_structured_failure() {
+        let flags = Flags {
+            port: 0,
+            device: None,
+            no_adb: true,
+            state_db: None,
+            scrcpy_host: "127.0.0.1".into(),
+            scrcpy_port: 1,
+        };
+        let shared = SharedState::new(None);
+
+        let result = execute_action(
+            &Action::InjectRaw {
+                bytes: vec![1, 2, 3],
+                deadline_ms: 100,
+            },
+            &flags,
+            &shared,
+        );
+
+        assert!(!result.landed);
+        assert_eq!(result.code, Some(AtomicErrorCode::KernelError));
+        assert!(result.retryable);
+    }
 }

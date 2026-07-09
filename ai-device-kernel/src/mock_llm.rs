@@ -66,7 +66,7 @@ impl MockLlmAdapter {
         for entry in entries {
             let entry = entry.map_err(|e| MockLlmError::Io {
                 path: dir.clone(),
-                source: e.into(),
+                source: e,
             })?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
@@ -76,12 +76,11 @@ impl MockLlmAdapter {
                 path: path.clone(),
                 source: e,
             })?;
-            let plan: Plan = crate::json::parse_and_validate(&bytes).map_err(|e| {
-                MockLlmError::Schema {
+            let plan: Plan =
+                crate::json::parse_and_validate(&bytes).map_err(|e| MockLlmError::Schema {
                     path: path.clone(),
                     source: e,
-                }
-            })?;
+                })?;
             fixtures.push(plan);
         }
         fixtures.sort_by_key(|p| p.id.0);
@@ -216,7 +215,10 @@ mod tests {
         let r = MockLlmAdapter::try_new(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
-            matches!(r, Err(MockLlmError::Schema { .. }) | Err(MockLlmError::Io { .. })),
+            matches!(
+                r,
+                Err(MockLlmError::Schema { .. }) | Err(MockLlmError::Io { .. })
+            ),
             "expected Schema or Io error, got: {r:?}"
         );
     }
@@ -247,8 +249,16 @@ mod tests {
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("ai-mock-test-{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.json"), serde_json::to_vec(&sample_plan(0)).unwrap()).unwrap();
-        std::fs::write(dir.join("b.json"), serde_json::to_vec(&sample_plan(1)).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("a.json"),
+            serde_json::to_vec(&sample_plan(0)).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("b.json"),
+            serde_json::to_vec(&sample_plan(1)).unwrap(),
+        )
+        .unwrap();
         let mut adapter = MockLlmAdapter::new(&dir);
         let obs = Observation::default();
         let p0 = adapter.plan(&obs);
@@ -270,7 +280,11 @@ mod tests {
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("ai-mock-test-{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.json"), serde_json::to_vec(&sample_plan(0)).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("a.json"),
+            serde_json::to_vec(&sample_plan(0)).unwrap(),
+        )
+        .unwrap();
         let mut adapter = MockLlmAdapter::new(&dir);
         let _ = adapter.plan(&Observation::default());
         let _ = adapter.plan(&Observation::default());

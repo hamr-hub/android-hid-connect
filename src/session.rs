@@ -28,6 +28,7 @@ use crate::hid::HidDevice;
 use crate::types::{
     dpad_hat_value, AndroidKeyAction, AndroidKeycode, ClipboardCopyKey, GamepadAxis, GamepadButton,
     Modifiers, Scancode, TouchAction, TouchPointerId, HID_ID_GAMEPAD_FIRST, HID_ID_MOUSE,
+    HID_MAX_SIZE,
 };
 
 /// Which HID devices the session should open. Touch events are always
@@ -340,6 +341,28 @@ impl<T: TransportWrite> HidSession<T> {
         self.send(&msg)
     }
 
+    /// Press a modifier key-chord: hold `mods` (e.g. `LCTRL`, or
+    /// `LCTRL | LSHIFT`), tap `scancode` while they are held, then
+    /// release the modifiers. This is the canonical path for editing
+    /// shortcuts an LLM needs — Ctrl+A (select-all), Ctrl+C / Ctrl+V
+    /// (copy / paste), Ctrl+Z (undo) — which a bare [`Self::key`] can't
+    /// express because it leaves the modifier byte dangling.
+    ///
+    /// Emits three keyboard reports:
+    /// 1. `mods` held + `scancode` down,
+    /// 2. `mods` held + `scancode` up (the shortcut has now fired),
+    /// 3. modifiers cleared (no keys held).
+    ///
+    /// Byte-exact via `UHID_INPUT` on the keyboard descriptor.
+    pub fn key_chord(&mut self, mods: Modifiers, scancode: u8) -> Result<()> {
+        // 1 + 2: tap the key with the modifiers held throughout.
+        self.key(scancode, true, mods)?;
+        self.key(scancode, false, mods)?;
+        // 3: release the modifiers. `scancode` is already up, so this
+        // report carries no keys and a cleared modifier byte.
+        self.key(scancode, false, Modifiers::empty())
+    }
+
     /// Press and release the LEFT mouse button at the absolute screen
     /// coordinate `(x, y)`. Implemented via `INJECT_TOUCH_EVENT` — no
     /// UHID mouse device needs to be open.
@@ -387,10 +410,20 @@ impl<T: TransportWrite> HidSession<T> {
         let (x0, y0) = from;
         let (x1, y1) = to;
         self.send(&self.touch_msg(ACTION_DOWN, pointer_id, x0, y0, 1.0))?;
+        // P3: hoist the loop-invariant casts out of the hot loop. The
+        // per-iteration arithmetic keeps the exact same op order as
+        // before (`base + delta * (i / steps)`), so the `.round()`
+        // result is byte-identical — only the redundant int→f32 casts
+        // per step are eliminated.
+        let x0f = x0 as f32;
+        let y0f = y0 as f32;
+        let dxf = (x1 - x0) as f32;
+        let dyf = (y1 - y0) as f32;
+        let stepsf = steps as f32;
         for i in 1..steps {
-            let t = i as f32 / steps as f32;
-            let x = (x0 as f32 + (x1 - x0) as f32 * t).round() as i32;
-            let y = (y0 as f32 + (y1 - y0) as f32 * t).round() as i32;
+            let t = i as f32 / stepsf;
+            let x = (x0f + dxf * t).round() as i32;
+            let y = (y0f + dyf * t).round() as i32;
             self.send(&self.touch_msg(ACTION_MOVE, pointer_id, x, y, 1.0))?;
         }
         self.send(&self.touch_msg(ACTION_MOVE, pointer_id, x1, y1, 1.0))?;
@@ -538,6 +571,28 @@ impl<T: TransportWrite> HidSession<T> {
     pub fn set_frame_raw_packed(&mut self, payload: &[u8; GAMEPAD_FRAME_BYTES]) -> Result<()> {
         let hid_id = self.gamepad_hid_id()?;
         self.transport.push_gamepad_input(hid_id, payload)?;
+        Ok(())
+    }
+
+    /// Send one raw UHID report to the opened gamepad slot.
+    ///
+    /// Accepts any non-empty payload up to [`HID_MAX_SIZE`]. This is the
+    /// byte-level escape hatch for callers that already own a descriptor-aware
+    /// report shape and intentionally want to bypass typed gamepad helpers.
+    #[inline]
+    pub fn inject_raw_gamepad_report(&mut self, payload: &[u8]) -> Result<()> {
+        if payload.is_empty() {
+            return Err(Error::SessionLifecycle("raw gamepad report is empty"));
+        }
+        if payload.len() > HID_MAX_SIZE {
+            return Err(Error::ControlMessageTooLarge {
+                size: payload.len(),
+                max: HID_MAX_SIZE,
+            });
+        }
+        let hid_id = self.gamepad_hid_id()?;
+        self.transport
+            .push_uhid_input(hid_id, payload.len() as u16, payload)?;
         Ok(())
     }
 
@@ -1163,6 +1218,103 @@ impl<T: TransportWrite> HidSession<T> {
                 h * 3 / 4,
                 0.0,
             )?;
+        }
+        Ok(())
+    }
+
+    /// Drag-and-drop: press at `from`, hold, linearly drag to `to`
+    /// over `steps` intermediate samples, dwell at the target, then
+    /// release. Distinct from [`Self::swipe`] in that it holds a
+    /// press at the origin *and* the target long enough for the
+    /// launcher / list to register a drag pickup and drop, which a
+    /// fast swipe skips. Byte-exact via `INJECT_TOUCH_EVENT`.
+    ///
+    /// `dwell` is the hold at each end (blocks the calling thread; wrap
+    /// in `spawn_blocking` if you need it async). Pass `Duration::ZERO`
+    /// for a synchronous, non-blocking drag.
+    pub fn drag(
+        &mut self,
+        from: (i32, i32),
+        to: (i32, i32),
+        steps: u32,
+        dwell: std::time::Duration,
+    ) -> Result<()> {
+        let steps = steps.max(2);
+        let (x0, y0) = from;
+        let (x1, y1) = to;
+        // Pickup: press and hold at the origin so the target view
+        // enters drag mode before we start moving.
+        self.touch_msg_pub(crate::multitouch::ACTION_DOWN, 0, x0, y0, 1.0)?;
+        if !dwell.is_zero() {
+            std::thread::sleep(dwell);
+        }
+        let x0f = x0 as f32;
+        let y0f = y0 as f32;
+        let dxf = (x1 - x0) as f32;
+        let dyf = (y1 - y0) as f32;
+        let stepsf = steps as f32;
+        for i in 1..steps {
+            let t = i as f32 / stepsf;
+            let x = (x0f + dxf * t).round() as i32;
+            let y = (y0f + dyf * t).round() as i32;
+            self.touch_msg_pub(crate::multitouch::ACTION_MOVE, 0, x, y, 1.0)?;
+        }
+        self.touch_msg_pub(crate::multitouch::ACTION_MOVE, 0, x1, y1, 1.0)?;
+        // Drop: dwell at the target so the drop is registered, then up.
+        if !dwell.is_zero() {
+            std::thread::sleep(dwell);
+        }
+        self.touch_msg_pub(crate::multitouch::ACTION_UP, 0, x1, y1, 0.0)
+    }
+
+    /// Two-finger pinch centered on `(cx, cy)`. Both fingers start at
+    /// `start_radius` px from the center and move to `end_radius` over
+    /// `steps` samples: `end < start` pinches in (zoom out), `end >
+    /// start` spreads (zoom in). Fingers move along the horizontal
+    /// axis (finger 0 left of center, finger 1 right). Byte-exact via
+    /// the 10-point [`MultitouchHandle`].
+    pub fn pinch(
+        &mut self,
+        cx: i32,
+        cy: i32,
+        start_radius: i32,
+        end_radius: i32,
+        steps: u32,
+    ) -> Result<()> {
+        let mut mt = self.multitouch();
+        // Finger 0 on the left, finger 1 on the right of the center.
+        mt.down(0, cx - start_radius, cy, 1.0)?;
+        mt.down(1, cx + start_radius, cy, 1.0)?;
+        mt.pinch(
+            (0, cx - start_radius, cy, cx - end_radius, cy),
+            (1, cx + start_radius, cy, cx + end_radius, cy),
+            steps,
+        )?;
+        mt.up(0)?;
+        mt.up(1)?;
+        Ok(())
+    }
+
+    /// Simultaneous N-finger tap (2 ≤ `fingers` ≤ 10) — all fingers go
+    /// down together, then all lift together. Generalizes the
+    /// hardcoded three-finger screenshot to any accessibility / system
+    /// multi-finger gesture. `points` supplies one `(x, y)` per finger;
+    /// only the first `fingers` entries are used. Byte-exact.
+    pub fn multi_finger_tap(&mut self, points: &[(i32, i32)]) -> Result<()> {
+        let fingers = points.len();
+        if !(2..=crate::multitouch::MAX_POINTERS as usize).contains(&fingers) {
+            return Err(Error::PointerIdOutOfRange(
+                fingers as u64,
+                crate::multitouch::MAX_POINTERS - 1,
+            ));
+        }
+        let mut mt = self.multitouch();
+        for (id, &(x, y)) in points.iter().enumerate() {
+            mt.down(id as u64, x, y, 1.0)?;
+        }
+        // Release in the same order; MultitouchHandle tracks each slot.
+        for id in 0..fingers {
+            mt.up(id as u64)?;
         }
         Ok(())
     }

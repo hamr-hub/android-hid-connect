@@ -52,15 +52,20 @@ echo -ne '\x00\x00\x00\x01ping' | nc 127.0.0.1 9008
 The `adk` binary listens on port 9008 and speaks the
 postcard/4-verb protocol defined in
 [`ai-device-kernel/src/protocol.rs`](../ai-device-kernel/src/protocol.rs).
+For bridge-capable writes (`Tap`, `Swipe`, `TypeText`, `Key`, `Launch`,
+`SetClipboard`, `GamepadFrame`, `InjectRaw`), `adk` lazily opens the scrcpy
+control socket at `--scrcpy-host 127.0.0.1 --scrcpy-port 27183` and uses the
+same byte-exact bridge as the in-process API. Start scrcpy-server with
+`control=true tunnel_forward=true send_dummy_byte=true` and forward
+`tcp:27183 localabstract:scrcpy` before sending these actions.
 
 ---
 
-## 4. Real-device E2E (Kuaishou AutoGLM-Phone benchmark)
+## 4. Real-device E2E
 
-The canonical real-device end-to-end test is
-[`examples/live_autoglm_benchmark.rs`](../examples/live_autoglm_benchmark.rs)
-— an 11-step Kuaishou live-stream gift-panel task using the
-byte-exact UHID control surface. Prerequisites:
+The canonical real-device end-to-end coverage is the
+[`examples/live_e2e.rs`](../examples/live_e2e.rs) byte-exact driver.
+It requires a connected Android device with `scrcpy-server` running:
 
 ```bash
 # 1. Push + start scrcpy-server on device
@@ -71,12 +76,9 @@ adb shell 'nohup sh -c "CLASSPATH=/data/local/tmp/scrcpy-server \
   video=false audio=false control=true clipboard_autosync=false \
   tunnel_forward=true send_dummy_byte=true" > /dev/null 2>&1 &'
 
-# 2. Run the bench
-cargo run --release --example live_autoglm_benchmark
+# 2. Run the E2E driver
+cargo run --release --example live_e2e
 ```
-
-Per-step latency is printed to stdout; screenshots are captured
-between steps to `/tmp/autoglm_step_*.png`.
 
 ---
 

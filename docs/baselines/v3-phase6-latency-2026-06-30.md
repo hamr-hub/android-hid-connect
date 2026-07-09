@@ -32,8 +32,8 @@ Pre-requisites:
 target/release/adk --device R5CR70SRPSD --port 19008 &
 ADK_PID=$!
 
-# 2. Run the benchmark (defaults: 30 samples, tap (540, 1200)).
-docs/real_dev_tap_bench.py --host 127.0.0.1 --port 19008 --n 30
+# 2. Use adk-bench to measure parse + reply latency:
+target/release/adk-bench --iterations=30
 
 # 3. Tear down.
 kill $ADK_PID
@@ -56,7 +56,7 @@ The 0.78 ms p50 / 9.51 ms max for the `--no-adb` Plan round-trip was captured ea
 
 ## What Phase 6.5 will save
 
-Projected when `adk` runs natively on `R5CR70SRPSD` (Phase 6.5 binary port per `docs/agent-integration-recipe.md`):
+Projected when `adk` runs natively on `R5CR70SRPSD`:
 
 | Latency component | Host-path today | Native tomorrow | Δ |
 |---|---|---|---|
@@ -80,7 +80,7 @@ Pre-Phase-6.5 path uses **~700 ms per tap** to do the same thing. Post-Phase-6.5
 adb shell wm size                # confirm physical size
 adb shell dumpsys window | grep mCurrentFocus  # confirm foreground
 target/release/adk --device <serial> --port 19008 &
-docs/real_dev_tap_bench.py --n 100 --x 540 --y 1200
+target/release/adk-bench --iterations=100
 ```
 
 The bench taps (540, 1200) — the center of the screen on most 1080×2400 devices, falling within the launcher background (not triggering any visible UI). **Safety boundary preserved**: no data delete, no APK install, no payment, no login.

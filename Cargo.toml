@@ -24,9 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 blake3 = { version = "1", default-features = false }
-rusqlite = { version = "0.31", default-features = false, features = ["bundled"] }
-schemars = { version = "0.8", default-features = false, features = ["derive"] }
-jsonschema = { version = "0.17", default-features = false }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+schemars = { version = "1.2", default-features = false, features = ["derive"] }
+jsonschema = { version = "0.48", default-features = false }
 semver = { version = "1", default-features = false, features = ["serde"] }
 
 [workspace.lints.rust]
